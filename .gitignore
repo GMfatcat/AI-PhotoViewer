@@ -1,0 +1,21 @@
+# Python virtual env (huge: torch, etc.)
+.venv/
+__pycache__/
+*.pyc
+
+# Photo database — NOT tracked
+photos.db
+photos.db-wal
+photos.db-shm
+
+# Generated / cached artifacts
+.thumbs/
+busy/
+
+# Model weights (large, downloadable)
+*.pt
+models/
+
+# OS
+Thumbs.db
+.DS_Store

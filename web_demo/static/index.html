@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>Photo Archaeology</title>
+<link rel="stylesheet" href="style.css?v=6">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">Photo Archaeology</div>
+
+  <div class="search-group">
+    <input id="search-input" type="text" autocomplete="off"
+           placeholder="語意搜尋…  兩個女生 / two girls" />
+    <button id="search-btn" title="Search (Enter)">🔍</button>
+    <button id="search-clear" title="Clear search">✕</button>
+    <label class="ctl">top
+      <input id="search-top" type="number" min="1" max="50" value="12" />
+    </label>
+    <label class="ctl">門檻
+      <input id="search-thr" type="range" min="0" max="0.9" step="0.05" value="0" />
+      <span id="thr-val">off</span>
+    </label>
+  </div>
+
+  <div class="filter-group">
+    <label>Filter:</label>
+    <select id="class-filter">
+      <option value="">— all photos —</option>
+    </select>
+  </div>
+
+  <div class="nav-controls">
+    <button id="btn-prev" title="Previous (←)">←</button>
+    <button id="btn-next" title="Next (→)">→</button>
+    <button id="btn-random" title="Random (R)">Random</button>
+    <span class="position">
+      <span id="pos-current">-</span> / <span id="pos-total">-</span>
+    </span>
+  </div>
+
+  <div class="stats" id="stats">loading…</div>
+
+  <div class="help-group">
+    <button id="btn-help" title="使用說明">❓</button>
+    <button id="btn-flow" title="架構流程圖">🗺</button>
+  </div>
+</header>
+
+<main class="workspace">
+  <!-- LEFT: results column (pager toolbar + grid) -->
+  <aside class="results-col">
+    <div class="grid-toolbar">
+      <button id="btn-shuffle" title="重新洗牌(瀏覽模式)">🎲</button>
+      <button id="btn-page-prev" title="上一組">‹</button>
+      <span id="page-label">–</span>
+      <button id="btn-page-next" title="下一組">›</button>
+      <select id="page-size" title="每頁張數">
+        <option value="10">10</option>
+        <option value="20" selected>20</option>
+        <option value="30">30</option>
+        <option value="40">40</option>
+      </select>
+    </div>
+    <div class="results-grid" id="results-grid"></div>
+  </aside>
+
+  <!-- CENTER: detail viewer -->
+  <div class="canvas-wrap">
+    <div class="canvas-container">
+      <canvas id="canvas"></canvas>
+      <div id="hover-label" class="hover-label hidden"></div>
+    </div>
+    <div class="filename" id="filename"></div>
+  </div>
+
+  <!-- RIGHT: detection inspector -->
+  <aside class="info-panel">
+    <h3>Photo info</h3>
+    <div class="photo-meta" id="photo-meta"></div>
+
+    <h3>Object under cursor</h3>
+    <div class="hover-info" id="hover-info">
+      <em class="muted">hover an object on the photo</em>
+    </div>
+
+    <h3>All detections (<span id="det-count">0</span>)</h3>
+    <div class="det-list" id="det-list"></div>
+  </aside>
+</main>
+
+<footer class="bottom-help">
+  click a thumbnail to inspect  ·  <kbd>←</kbd> <kbd>→</kbd> navigate  ·
+  <kbd>R</kbd> random  ·  click object to lock
+</footer>
+
+<!-- Floating modal (usage / flowchart) -->
+<div id="modal-overlay" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <span id="modal-title"></span>
+      <span id="modal-tools"></span>
+      <button id="modal-close" title="關閉 (Esc)">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<script src="app.js?v=7"></script>
+</body>
+</html>

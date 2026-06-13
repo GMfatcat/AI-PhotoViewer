@@ -1,0 +1,9 @@
+# Core (scan + inspect)
+ultralytics>=8.3.0
+Pillow>=10.0.0
+pillow-heif>=0.16.0
+tqdm>=4.65.0
+
+# Web demo
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
