@@ -70,16 +70,21 @@ uv pip install -r requirements.txt
 
 ```powershell
 # Windows / PowerShell
-.venv\Scripts\python.exe scripts\check-env.py   # 先檢查環境
-scripts\run-server.ps1                           # 啟動(可加 -Model / -Port)
+.venv\Scripts\python.exe scripts\check-env.py   # 環境檢查(套件 / CUDA / sqlite-vec / 模型)
+scripts\run-server.ps1                  # 啟動(預設 127.0.0.1:8000,只本機)
+scripts\run-server.ps1 -Port 8080       # 換 port
+scripts\run-server.ps1 -BindHost 0.0.0.0    # 開放 LAN
+scripts\run-server.ps1 -Stop            # 停止
 ```
 ```bash
 # Linux / macOS / Git Bash
 .venv/bin/python scripts/check-env.py
-scripts/run-server.sh
+scripts/run-server.sh                   # 啟動
+scripts/run-server.sh --port 8080
+scripts/run-server.sh --stop            # 停止
 ```
 
-首次啟動會自動建立空的 `photos.db`,之後直接在歡迎頁索引即可。
+首次啟動會**自動建立空的 `photos.db`**,之後直接在歡迎頁索引即可。
 模型路徑預設 `../models/siglip2-so400m`,可用 `-Model`(ps1)/ `--model`(sh)或環境變數 `SIGLIP_MODEL` 覆寫。
 
 ### 手動 CLI(進階)

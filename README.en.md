@@ -70,16 +70,21 @@ Put a model directory somewhere (e.g. `../models/`) and point `embed.py` / the s
 
 ```powershell
 # Windows / PowerShell
-.venv\Scripts\python.exe scripts\check-env.py   # check the environment first
-scripts\run-server.ps1                           # launch (add -Model / -Port to override)
+.venv\Scripts\python.exe scripts\check-env.py   # env check (packages / CUDA / sqlite-vec / model)
+scripts\run-server.ps1                  # start (defaults to 127.0.0.1:8000, local only)
+scripts\run-server.ps1 -Port 8080       # different port
+scripts\run-server.ps1 -BindHost 0.0.0.0    # expose on LAN
+scripts\run-server.ps1 -Stop            # stop
 ```
 ```bash
 # Linux / macOS / Git Bash
 .venv/bin/python scripts/check-env.py
-scripts/run-server.sh
+scripts/run-server.sh                   # start
+scripts/run-server.sh --port 8080
+scripts/run-server.sh --stop            # stop
 ```
 
-An empty `photos.db` is created on first launch — then just index from the welcome page.
+An empty `photos.db` is **created automatically on first launch** — then just index from the welcome page.
 The model path defaults to `../models/siglip2-so400m`; override with `-Model` (ps1) / `--model` (sh) or the `SIGLIP_MODEL` env var.
 
 ### Manual CLI (advanced)
