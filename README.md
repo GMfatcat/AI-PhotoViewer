@@ -67,7 +67,7 @@ uv pip install -r requirements.txt
 | 模型 | 維度 | 大小 | 備註 |
 |------|------|------|------|
 | `google/siglip2-base-patch16-224` | 768 | ~1.4 GB | 快 |
-| `google/siglip2-so400m-patch14-384` | 1152 | ~4.2 GB | 較佳,**中文**尤其 |
+| `google/siglip2-so400m-patch14-384` | 1152 | ~4.2 GB | 較佳,尤其**中文** |
 
 > 若 HuggingFace 下載卡住(Xet 協定),設 `HF_HUB_DISABLE_XET=1`,或直接用
 > `curl -L -C - --retry 40 <resolve-url>` 把檔案抓到本地資料夾。
