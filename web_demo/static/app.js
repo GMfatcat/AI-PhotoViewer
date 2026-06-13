@@ -710,6 +710,7 @@ const wc = {
 };
 
 let healthTimer = null;
+let pollActive = false;
 let lastJobState = null;
 
 function escHtml(s) {
@@ -739,9 +740,8 @@ async function postJSON(path, body) {
 function showWelcome() {
   wc.gallery.classList.add("hidden");
   wc.welcome.classList.remove("hidden");
-  refreshHealth();
   refreshSources();
-  startHealthPolling();
+  startHealthPolling();   // does an immediate poll, then self-schedules
 }
 
 async function enterGallery() {
@@ -756,19 +756,40 @@ async function enterGallery() {
   }
 }
 
-// ── Health / status polling ───────────────────────────
+// ── Health / status polling (adaptive: fast while a job runs, slow when idle) ──
+const POLL_BUSY_MS = 1000;   // an index job is running → near-real-time progress
+const POLL_IDLE_MS = 5000;   // nothing happening → just keep the status card fresh
+
 function startHealthPolling() {
-  stopHealthPolling();
-  healthTimer = setInterval(refreshHealth, 1500);
+  if (pollActive) return;
+  pollActive = true;
+  pollLoop();                 // immediate first poll, then self-schedules
 }
+
 function stopHealthPolling() {
-  if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
+  pollActive = false;
+  if (healthTimer) { clearTimeout(healthTimer); healthTimer = null; }
+}
+
+async function pollLoop() {
+  if (!pollActive) return;
+  const running = await refreshHealth();
+  if (!pollActive) return;    // may have been stopped while awaiting
+  healthTimer = setTimeout(pollLoop, running ? POLL_BUSY_MS : POLL_IDLE_MS);
+}
+
+// Re-arm the loop right now (used when a job starts, so we switch to fast cadence
+// immediately instead of waiting out the current idle interval).
+function bumpPolling() {
+  if (!pollActive) return;
+  if (healthTimer) { clearTimeout(healthTimer); healthTimer = null; }
+  pollLoop();
 }
 
 async function refreshHealth() {
   let h;
   try { h = await api("/api/health"); }
-  catch (e) { wc.health.textContent = `讀取失敗:${e.message}`; return; }
+  catch (e) { wc.health.textContent = `讀取失敗:${e.message}`; return false; }
   renderHealth(h);
   renderJob(h.job);
 
@@ -777,6 +798,7 @@ async function refreshHealth() {
     refreshSources();          // a job just finished — refresh the folder list
   }
   lastJobState = js;
+  return js === "running";
 }
 
 function renderHealth(h) {
@@ -857,7 +879,7 @@ async function submitIndex(mode) {
     await postJSON("/api/index", { path, mode: mode === "full" ? "full" : "new" });
     wc.formMsg.textContent = `已開始索引(${mode === "full" ? "重掃全部" : "新照片"})✓`;
     lastJobState = "running";
-    refreshHealth();
+    bumpPolling();   // switch to fast cadence immediately
   } catch (e) {
     wc.formMsg.textContent = `錯誤:${e.message}`;
   }
