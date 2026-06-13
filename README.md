@@ -66,6 +66,24 @@ uv pip install -r requirements.txt
 
 ## 使用方式
 
+### 快速啟動(腳本)
+
+```powershell
+# Windows / PowerShell
+.venv\Scripts\python.exe scripts\check-env.py   # 先檢查環境
+scripts\run-server.ps1                           # 啟動(可加 -Model / -Port)
+```
+```bash
+# Linux / macOS / Git Bash
+.venv/bin/python scripts/check-env.py
+scripts/run-server.sh
+```
+
+首次啟動會自動建立空的 `photos.db`,之後直接在歡迎頁索引即可。
+模型路徑預設 `../models/siglip2-so400m`,可用 `-Model`(ps1)/ `--model`(sh)或環境變數 `SIGLIP_MODEL` 覆寫。
+
+### 手動 CLI(進階)
+
 ```bash
 # 1) 掃描照片資料夾(增量、可中斷續跑)
 python scan.py "C:\path\to\your\photos"
@@ -122,4 +140,17 @@ requirements.txt
 - **Blackwell(RTX 50xx)** GPU 需要 PyTorch **cu128** 版 —— 預設的 PyPI 版不會吃 GPU。
 - 向量索引就存在 **`photos.db` 裡面**(sqlite-vec)—— 單一檔案、好備份。
 - `photos.db`、SigLIP 權重(`models/`、`*.pt`)、venv 與產生的縮圖都已被 git 忽略。
+- **Server log**:rotating,位於 `web_demo/server.log`,單檔 1 MB、保留 2 份(共 3 MB 上限)。
 - SigLIP 2 權重受 Google 模型授權;YOLOE / Ultralytics 為 AGPL-3.0。
+
+## 效能參考(RTX 5070 Ti · so400m)
+
+| 項目 | 數據 |
+|------|------|
+| VRAM(搜尋,SigLIP 已載入) | ~6.1 GB |
+| VRAM(索引,YOLOE + SigLIP) | ~6.6 GB |
+| YOLOE 偵測 + 分割 | ~41 張/秒 |
+| SigLIP 嵌入 | ~22 張/秒 |
+| 端到端索引 | ~15 張/秒(GPU 推論;含磁碟 / EXIF / DB 略低) |
+
+> 數據為單卡實測;`base` 模型(768 維)更省 VRAM、更快,但中文較弱。

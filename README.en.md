@@ -66,6 +66,24 @@ Put a model directory somewhere (e.g. `../models/`) and point `embed.py` / the s
 
 ## Usage
 
+### Quick start (scripts)
+
+```powershell
+# Windows / PowerShell
+.venv\Scripts\python.exe scripts\check-env.py   # check the environment first
+scripts\run-server.ps1                           # launch (add -Model / -Port to override)
+```
+```bash
+# Linux / macOS / Git Bash
+.venv/bin/python scripts/check-env.py
+scripts/run-server.sh
+```
+
+An empty `photos.db` is created on first launch — then just index from the welcome page.
+The model path defaults to `../models/siglip2-so400m`; override with `-Model` (ps1) / `--model` (sh) or the `SIGLIP_MODEL` env var.
+
+### Manual CLI (advanced)
+
 ```bash
 # 1) Scan a photo folder (incremental & resumable)
 python scan.py "C:\path\to\your\photos"
@@ -124,4 +142,17 @@ requirements.txt
 - **Blackwell (RTX 50xx)** GPUs require PyTorch **cu128** wheels — the default PyPI build won't use the GPU.
 - The vector index lives **inside `photos.db`** (sqlite-vec) — one file, easy to back up.
 - `photos.db`, SigLIP weights (`models/`, `*.pt`), the venv and generated thumbnails are git-ignored.
+- **Server log**: rotating, at `web_demo/server.log` — 1 MB per file, 2 backups kept (3 MB cap).
 - The SigLIP 2 weights are subject to Google's model license; YOLOE/Ultralytics under AGPL-3.0.
+
+## Performance (RTX 5070 Ti · so400m)
+
+| Metric | Value |
+|--------|-------|
+| VRAM (search, SigLIP loaded) | ~6.1 GB |
+| VRAM (indexing, YOLOE + SigLIP) | ~6.6 GB |
+| YOLOE detect + segment | ~41 img/s |
+| SigLIP embedding | ~22 img/s |
+| End-to-end indexing | ~15 img/s (GPU inference; a bit lower with disk / EXIF / DB) |
+
+> Measured on a single GPU. The `base` model (768-dim) is lighter and faster, but weaker on Chinese.
