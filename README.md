@@ -20,6 +20,7 @@
 - 🎯 **偵測檢視器** — 在畫布上 hover / 鎖定物件遮罩
 - 🎲 **洗牌 + 分頁** — 隨機順序瀏覽、翻頁、每頁張數可調
 - 🎚️ **Top-N + 門檻** — 控制回傳數量與相關度
+- 🗂️ **歡迎頁(全在 Web UI)** — 新增 / 重索引 / 取消 / 解除索引資料夾、即時進度、後端狀態(GPU/VRAM/模型/覆蓋率),不必碰指令列
 - 100% 本地 · 單一 SQLite 檔 · 單張 GPU 即可
 
 ## 流程架構
@@ -80,8 +81,18 @@ python web_demo\main.py --db photos.db --model ..\models\siglip2-so400m
 切換成不同維度的模型:`python embed.py --model <dir> --rebuild`。
 不開 web、直接用 CLI 搜尋:`python embed.py --search "海邊" --model <dir>`。
 
+### 全用 Web UI(不必碰指令列)
+
+啟動 server 後開歡迎頁就能完成索引,**不必先跑 `scan.py` / `embed.py`**:
+
+- 把照片直接丟進專案內的 **`default-image/`**(資料夾裡有 `PUT_YOUR_IMAGES_HERE.txt` 標記位置)→ 回 UI 對它按「**⟳ 全部**」索引;或
+- 用 **📁 瀏覽…** 選任意資料夾(或貼路徑)→「**索引新照片**」
+
+索引 / 重索引 / 取消 / 解除索引 / 後端狀態,全部在歡迎頁完成。`default-image/` 會在 server 啟動時自動註冊成預設來源。
+
 ## Web UI 操作說明
 
+- **歡迎頁(預設首頁)**:後端狀態卡(GPU/VRAM、模型、照片數、覆蓋率)· ➕ 新增資料夾(貼路徑或 📁 瀏覽)· 已索引清單每列可 **🔁 新增 / ⟳ 全部 / 🗑 移除** · 工作進度條 + 取消 · 「**📂 開始檢視**」進相簿,相簿內「**🏠**」回首頁
 - **搜尋框**(中/英)+ `top`(回幾張)+ `門檻`(絕對相似度下限 —— 數字對應縮圖上的綠色徽章;最左 = 全部顯示)
 - **結果網格**(左):縮圖 + 相似度;`🎲` 重新洗牌 · `‹ ›` 上/下一組 · 每頁張數 10–40
 - **Filter**:依 YOLOE 偵測類別篩選
@@ -99,8 +110,10 @@ embed.py           SigLIP 2 向量      → vec_photos(另有 --search CLI、--r
 inspect_db.py      DB 統計 / 共現分析
 add_masks.py       為既有資料補遮罩
 web_demo/
-  main.py          FastAPI server + REST API(/api/search、/api/photos、/api/thumb …)
+  main.py          FastAPI server + REST API(/api/search、/api/photos、/api/thumb、/api/health、/api/index …)
+  jobs.py          背景索引工作(scan→embed、進度/取消、prune、sources 管理)
   static/          index.html · app.js · style.css
+default-image/     預設來源資料夾(把照片放這裡;啟動時自動註冊)
 requirements.txt
 ```
 

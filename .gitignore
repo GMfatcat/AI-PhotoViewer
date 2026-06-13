@@ -16,9 +16,9 @@ busy/
 web_demo/server.log
 web_demo/server.log.*
 
-# Default sample image folder — keep the dir, not the photos
+# Default sample image folder — keep the dir + marker, not the photos
 default-image/*
-!default-image/.gitkeep
+!default-image/PUT_YOUR_IMAGES_HERE.txt
 
 # Model weights (large, downloadable)
 *.pt

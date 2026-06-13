@@ -20,6 +20,7 @@ A local, privacy-first photo browser that combines **YOLOE open-vocabulary objec
 - 🎯 **Detection inspector** — hover / lock object masks on a canvas
 - 🎲 **Shuffle + pagination** — browse in random order, page through, adjustable page size
 - 🎚️ **Top-N + threshold** — control how many results and how relevant
+- 🗂️ **Welcome page (all in the Web UI)** — add / reindex / cancel / remove folders, live progress, and backend status (GPU/VRAM/model/coverage) — no command line needed
 - 100% local · single SQLite file · runs on one GPU
 
 ## Pipeline
@@ -80,8 +81,18 @@ python web_demo\main.py --db photos.db --model ..\models\siglip2-so400m
 Switching to a model with a different dimension: `python embed.py --model <dir> --rebuild`.
 Quick CLI search without the web UI: `python embed.py --search "海邊" --model <dir>`.
 
+### All in the Web UI (no command line)
+
+Once the server is up, you can index entirely from the welcome page — **no need to run `scan.py` / `embed.py` first**:
+
+- Drop photos into the project's **`default-image/`** folder (it contains a `PUT_YOUR_IMAGES_HERE.txt` marker) → back in the UI, click **⟳ All** on it to index; or
+- Use **📁 Browse…** to pick any folder (or paste a path) → **Index new photos**
+
+Indexing, reindexing, cancel, remove-source, and backend status all happen on the welcome page. `default-image/` is auto-registered as the default source when the server starts.
+
 ## Web UI guide
 
+- **Welcome page (default home)**: backend status card (GPU/VRAM, model, photo count, coverage) · ➕ add a folder (paste a path or 📁 browse) · each indexed source has **🔁 New / ⟳ All / 🗑 Remove** · job progress bar + cancel · **📂 Enter gallery**, and **🏠** in the gallery returns home
 - **Search box** (zh/en) + `top` (how many) + `threshold` (absolute similarity cutoff — the number
   matches the green badge on each thumbnail; far-left = show all)
 - **Results grid** (left): thumbnails + similarity; `🎲` reshuffle · `‹ ›` prev/next set · page-size 10–40
@@ -101,8 +112,10 @@ embed.py           SigLIP 2 embeddings      → vec_photos   (also: --search CLI
 inspect_db.py      DB stats / co-occurrence
 add_masks.py       backfill masks for existing rows
 web_demo/
-  main.py          FastAPI server + REST API (/api/search, /api/photos, /api/thumb, ...)
+  main.py          FastAPI server + REST API (/api/search, /api/photos, /api/thumb, /api/health, /api/index, ...)
+  jobs.py          background index jobs (scan→embed, progress/cancel, prune, sources)
   static/          index.html · app.js · style.css
+default-image/     default source folder (drop photos here; auto-registered at startup)
 requirements.txt
 ```
 
