@@ -14,7 +14,7 @@
   <img src="repo-cover.png" alt="AI-PhotoViewer — local, private semantic photo search (YOLOE + SigLIP 2)" width="820">
 </p>
 
-A local, privacy-first photo browser that combines **YOLOE open-vocabulary object detection** with **SigLIP 2 natural-language semantic search** (Chinese & English). Scan a folder once, then find photos by *meaning* — `two girls`, `海邊日落`, `a laptop on a desk` — and inspect every detected object with interactive masks. Everything runs locally on your GPU; nothing leaves the machine.
+A local, privacy-first photo browser that combines **YOLOE open-vocabulary object detection** with **SigLIP 2 natural-language semantic search** (Chinese & English). Scan a folder once, then find photos by *meaning* — `two girls`, `海邊日落`, `cat` — and inspect every detected object with interactive masks. Everything runs locally on your GPU; nothing leaves the machine.
 
 <p align="center">
   <img src="demo.png" alt="Web UI: results grid · photo viewer · detection inspector" width="900">
@@ -28,7 +28,7 @@ A local, privacy-first photo browser that combines **YOLOE open-vocabulary objec
 - 🎯 **Detection inspector** — hover / lock object masks on a canvas
 - 🎲 **Shuffle + pagination** — browse in random order, page through, adjustable page size
 - 🎚️ **Top-N + threshold** — control how many results and how relevant
-- 🗂️ **Welcome page (all in the Web UI)** — add / reindex / cancel / remove folders, live progress, and backend status (GPU/VRAM/model/coverage) — no command line needed
+- 🗂️ **Web UI** — add / reindex / cancel / remove folders, live progress, backend status — no command line needed
 - 100% local · single SQLite file · runs on one GPU
 
 ## 🔄 Pipeline
@@ -123,7 +123,11 @@ Indexing, reindexing, cancel, remove-source, and backend status all happen on th
 
 ## 🖱️ Web UI guide
 
-- **Welcome page (default home)**: backend status card (GPU/VRAM, model, photo count, coverage) · ➕ add a folder (paste a path or 📁 browse) · each indexed source has **🔁 New / ⟳ All / 🗑 Remove** · job progress bar + cancel · **📂 Enter gallery**, and **🏠** in the gallery returns home
+- **Welcome page**
+  - backend status card (GPU/VRAM, model, photo count, coverage)
+  - ➕ add a folder (paste a path or 📁 browse)
+  - each indexed source has **🔁 New / ⟳ All / 🗑 Remove**
+  - **📂 Enter gallery**, and **🏠** in the gallery returns home
 - **Search box** (zh/en) + `top` (how many) + `threshold` (absolute similarity cutoff — the number
   matches the green badge on each thumbnail; far-left = show all)
 - **Results grid** (left): thumbnails + similarity; `🎲` reshuffle · `‹ ›` prev/next set · page-size 10–40
