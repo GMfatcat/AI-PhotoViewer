@@ -624,8 +624,11 @@ def main():
     args = ap.parse_args()
 
     if not args.db.exists():
-        print(f"DB not found: {args.db}")
-        return
+        # Fresh start: create an empty DB so the server can boot and the user can
+        # index entirely from the welcome page (no need to run scan.py first).
+        print(f"DB not found — creating an empty one: {args.db}")
+        import scan
+        scan.init_db(args.db.resolve()).close()
 
     global DB_PATH, MODEL_PATH
     DB_PATH = args.db.resolve()
