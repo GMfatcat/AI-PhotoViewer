@@ -367,6 +367,23 @@ def search_photos(
 THUMB_DIR = Path(__file__).parent / ".thumbs"
 
 
+def _thumb_key(src: Path) -> str:
+    """Thumbnail cache filename stem — keyed by file PATH (not photo_id, which is
+    reused across DB rebuilds). Shared by the thumb endpoint and source removal."""
+    import hashlib
+    return hashlib.md5(str(src).encode("utf-8")).hexdigest()[:16]
+
+
+def _under(folder: Path, photo_path: str) -> bool:
+    """True if photo_path is inside (or equals) folder. Used to find a source's
+    photos without SQL LIKE, whose _/% wildcards would mis-match real paths."""
+    try:
+        pp = Path(photo_path)
+        return pp == folder or folder in pp.parents
+    except Exception:                            # noqa: BLE001
+        return False
+
+
 @app.get("/api/thumb/{photo_id}")
 def get_thumb(photo_id: int, size: int = Query(240, le=512)):
     conn = get_conn()
@@ -384,9 +401,7 @@ def get_thumb(photo_id: int, size: int = Query(240, le=512)):
     # Key the cache by file PATH, not photo_id: ids are reassigned when the DB is
     # rebuilt, so a photo_id-keyed cache would serve a stale thumbnail for a file
     # that now lives under a different id. (mtime check below still catches edits.)
-    import hashlib
-    key = hashlib.md5(str(src).encode("utf-8")).hexdigest()[:16]
-    cache = THUMB_DIR / f"{key}_{size}.jpg"
+    cache = THUMB_DIR / f"{_thumb_key(src)}_{size}.jpg"
     if cache.exists() and cache.stat().st_mtime >= src.stat().st_mtime:
         return FileResponse(cache, media_type="image/jpeg", headers=NO_CACHE)
 
@@ -493,6 +508,58 @@ def job():
 @app.post("/api/job/cancel")
 def cancel_job():
     return {"cancelled": jobs.request_cancel()}
+
+
+@app.post("/api/sources/remove")
+def remove_source(payload: dict = Body(...)):
+    """Un-index a source folder: delete its photos (+ detections/masks/vectors),
+    the sources row, and their thumbnail cache. Files on disk are NOT touched.
+    Blocked (409) while an index job is running."""
+    job = jobs.current_job()
+    if job and job.get("state") == "running":
+        raise HTTPException(status_code=409, detail="索引進行中,請稍後再移除")
+    path = (payload or {}).get("path", "").strip().strip('"')
+    if not path:
+        raise HTTPException(status_code=400, detail="path required")
+    src = Path(path).resolve()
+
+    conn = get_conn()
+    try:
+        jobs.ensure_sources_table(conn)
+        victims = [(r["id"], r["path"]) for r in
+                   conn.execute("SELECT id, path FROM photos")
+                   if _under(src, r["path"])]
+        ids = [v[0] for v in victims]
+        jobs.delete_photos(conn, ids)
+        conn.execute("DELETE FROM sources WHERE path = ?", (str(src),))
+        conn.commit()
+    finally:
+        conn.close()
+
+    # vec_photos orphans (needs the sqlite-vec extension)
+    if ids:
+        try:
+            vconn = vec_conn()
+            try:
+                if vconn.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                                 "AND name='vec_photos'").fetchone():
+                    for pid in ids:
+                        vconn.execute("DELETE FROM vec_photos WHERE photo_id = ?", (pid,))
+                    vconn.commit()
+            finally:
+                vconn.close()
+        except Exception:                        # noqa: BLE001
+            pass
+
+    # drop cached thumbnails for the removed photos (any size)
+    for _pid, p in victims:
+        for f in THUMB_DIR.glob(f"{_thumb_key(Path(p))}_*.jpg"):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
+    return {"removed": len(ids), "source": str(src)}
 
 
 @app.get("/api/browse-folder")

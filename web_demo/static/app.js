@@ -846,7 +846,7 @@ function setFormDisabled(d) {
   wc.indexNew.disabled = d;
   wc.indexFull.disabled = d;
   wc.path.disabled = d;
-  wc.sources.querySelectorAll(".src-reindex").forEach(b => b.disabled = d);
+  wc.sources.querySelectorAll(".src-reindex, .src-remove").forEach(b => b.disabled = d);
 }
 
 async function submitIndex(mode) {
@@ -906,6 +906,7 @@ async function refreshSources() {
       <div class="src-actions">
         <button class="src-reindex" data-path="${p}" data-mode="new" title="只索引新照片">🔁 新增</button>
         <button class="src-reindex" data-path="${p}" data-mode="full" title="整個資料夾重掃">⟳ 全部</button>
+        <button class="src-remove" data-path="${p}" title="從索引移除此資料夾">🗑 移除</button>
       </div>
     </div>`;
   }).join("");
@@ -915,6 +916,21 @@ async function refreshSources() {
       wc.path.value = b.dataset.path;
       submitIndex(b.dataset.mode);
     }));
+  wc.sources.querySelectorAll(".src-remove").forEach(b =>
+    b.addEventListener("click", () => removeSource(b.dataset.path)));
+}
+
+async function removeSource(path) {
+  if (!confirm(`確定要解除索引「${path}」?\n會從資料庫刪除此來源的索引(照片檔案不會被刪)。`)) return;
+  wc.formMsg.textContent = "移除中…";
+  try {
+    const r = await postJSON("/api/sources/remove", { path });
+    wc.formMsg.textContent = `已移除「${path}」(刪除 ${r.removed} 張索引)`;
+    refreshHealth();
+    refreshSources();
+  } catch (e) {
+    wc.formMsg.textContent = `移除失敗:${e.message}`;
+  }
 }
 
 // ── Boot ──────────────────────────────────────────────

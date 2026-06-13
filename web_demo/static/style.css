@@ -669,6 +669,19 @@ kbd {
 }
 .src-reindex:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); }
 .src-reindex:disabled { opacity: 0.4; cursor: not-allowed; }
+.src-remove {
+  background: var(--bg-3);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 4px 9px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.src-remove:hover:not(:disabled) { background: var(--warn); border-color: var(--warn); }
+.src-remove:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* gallery wrapper fills viewport like before */
 .gallery {

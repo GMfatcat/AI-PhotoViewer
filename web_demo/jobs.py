@@ -62,6 +62,18 @@ def list_sources(conn):
              "last_indexed_at": r[2], "photo_count": r[3]} for r in rows]
 
 
+def delete_photos(conn, ids):
+    """Delete photo rows + their detections/masks. FK cascade isn't enabled, so
+    delete manually. Caller commits. vec_photos must be cleaned separately with a
+    sqlite-vec connection. Returns the number of rows targeted."""
+    for pid in ids:
+        conn.execute("DELETE FROM masks WHERE detection_id IN "
+                     "(SELECT id FROM detections WHERE photo_id = ?)", (pid,))
+        conn.execute("DELETE FROM detections WHERE photo_id = ?", (pid,))
+        conn.execute("DELETE FROM photos WHERE id = ?", (pid,))
+    return len(ids)
+
+
 def prune_missing(conn):
     """Delete DB photos whose file no longer exists (+ their detections/masks).
 
@@ -71,11 +83,7 @@ def prune_missing(conn):
     """
     gone = [pid for (pid, path) in conn.execute("SELECT id, path FROM photos")
             if not Path(path).exists()]
-    for pid in gone:
-        conn.execute("DELETE FROM masks WHERE detection_id IN "
-                     "(SELECT id FROM detections WHERE photo_id = ?)", (pid,))
-        conn.execute("DELETE FROM detections WHERE photo_id = ?", (pid,))
-        conn.execute("DELETE FROM photos WHERE id = ?", (pid,))
+    delete_photos(conn, gone)
     conn.commit()
     return len(gone)
 
