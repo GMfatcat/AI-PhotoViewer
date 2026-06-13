@@ -1,6 +1,6 @@
 # AI-PhotoViewer
 
-**English** | [繁體中文](README.zh-Hant.md)
+**English** | [繁體中文](README.md)
 
 A local, privacy-first photo browser that combines **YOLOE open-vocabulary object detection** with **SigLIP 2 natural-language semantic search** (Chinese & English). Scan a folder once, then find photos by *meaning* — `two girls`, `海邊日落`, `a laptop on a desk` — and inspect every detected object with interactive masks. Everything runs locally on your GPU; nothing leaves the machine.
 
