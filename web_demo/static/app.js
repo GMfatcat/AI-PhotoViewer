@@ -73,7 +73,9 @@ async function api(path) {
 }
 
 // ── Init ──────────────────────────────────────────────
-async function init() {
+// (Re)load all gallery data: stats line, class filter, photo list.
+// Called on first entry and again whenever the user returns after indexing.
+async function reloadGalleryData() {
   try {
     const stats = await api("/api/stats");
     statsBase = `${stats.photos} photos · ${stats.classes} classes`;
@@ -83,9 +85,10 @@ async function init() {
     return;
   }
 
-  // Populate class filter
+  // Populate class filter (rebuild from scratch — counts may have changed)
   try {
     const classes = await api("/api/classes");
+    els.classFilter.innerHTML = '<option value="">— all photos —</option>';
     for (const c of classes) {
       const opt = document.createElement("option");
       opt.value = c.class;
@@ -95,6 +98,12 @@ async function init() {
   } catch (e) { console.warn("class list:", e); }
 
   await loadPhotoList("");
+}
+
+let galleryInited = false;
+
+async function init() {
+  await reloadGalleryData();
 
   // Events
   els.btnPrev.addEventListener("click", () => navigate(-1));
@@ -144,7 +153,8 @@ function renderGrid() {
   const list = state.photoList;
   els.resultsGrid.innerHTML = list.map((p, i) => `
     <div class="grid-item" data-idx="${i}" title="${p.name}">
-      <img loading="lazy" src="/api/thumb/${p.id}" alt="">
+      <img loading="lazy" src="/api/thumb/${p.id}?v=${p.v || 0}" alt=""
+           onerror="this.closest('.grid-item').classList.add('missing')">
       ${p.sim != null ? `<span class="sim-badge">${p.sim.toFixed(2)}</span>` : ""}
     </div>`).join("");
   els.resultsGrid.querySelectorAll(".grid-item").forEach(el => {
@@ -306,7 +316,8 @@ async function loadPhoto(id) {
   try {
     state.currentPhoto = await api(`/api/photo/${id}`);
   } catch (e) {
-    clearCanvas(`Error: ${e.message}`);
+    console.error("loadPhoto:", e);
+    clearCanvas("⚠ 無法載入此照片");
     return;
   }
   renderPhotoMeta();
@@ -317,7 +328,7 @@ async function loadPhoto(id) {
     state.image = img;
     drawPhoto();
   };
-  img.onerror = () => clearCanvas("Image failed to load");
+  img.onerror = () => clearCanvas("⚠ 此照片檔案無法顯示或已移除");
   img.src = state.currentPhoto.image_url;
   const li = state.photoList[state.currentIndex];
   els.filename.textContent = state.currentPhoto.name +
@@ -679,5 +690,246 @@ const FLOW = `<pre>
 
 function openFlow() { openModal("架構流程圖 · Pipeline", FLOW); }
 
+// ── Welcome page ──────────────────────────────────────
+const wc = {
+  welcome:   document.getElementById("welcome"),
+  gallery:   document.getElementById("gallery"),
+  enter:     document.getElementById("wc-enter"),
+  home:      document.getElementById("btn-home"),
+  path:      document.getElementById("wc-path"),
+  browse:    document.getElementById("wc-browse"),
+  indexNew:  document.getElementById("wc-index-new"),
+  indexFull: document.getElementById("wc-index-full"),
+  formMsg:   document.getElementById("wc-form-msg"),
+  job:       document.getElementById("wc-job"),
+  bar:       document.getElementById("wc-bar"),
+  jobMsg:    document.getElementById("wc-job-msg"),
+  cancel:    document.getElementById("wc-cancel"),
+  health:    document.getElementById("wc-health"),
+  sources:   document.getElementById("wc-sources"),
+};
+
+let healthTimer = null;
+let lastJobState = null;
+
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function fmtTime(iso) {
+  if (!iso) return "—";
+  // sqlite stores e.g. "2026-06-13 14:05:09.123456"; trim to minutes
+  return String(iso).replace("T", " ").slice(0, 16);
+}
+
+async function postJSON(path, body) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  let data = {};
+  try { data = await r.json(); } catch (e) { /* empty body */ }
+  if (!r.ok) throw new Error(data.detail || `${path}: ${r.status}`);
+  return data;
+}
+
+// ── Page switching ────────────────────────────────────
+function showWelcome() {
+  wc.gallery.classList.add("hidden");
+  wc.welcome.classList.remove("hidden");
+  refreshHealth();
+  refreshSources();
+  startHealthPolling();
+}
+
+async function enterGallery() {
+  stopHealthPolling();
+  wc.welcome.classList.add("hidden");
+  wc.gallery.classList.remove("hidden");
+  if (!galleryInited) {
+    galleryInited = true;
+    await init();
+  } else {
+    await reloadGalleryData();   // pick up anything indexed since last visit
+  }
+}
+
+// ── Health / status polling ───────────────────────────
+function startHealthPolling() {
+  stopHealthPolling();
+  healthTimer = setInterval(refreshHealth, 1500);
+}
+function stopHealthPolling() {
+  if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
+}
+
+async function refreshHealth() {
+  let h;
+  try { h = await api("/api/health"); }
+  catch (e) { wc.health.textContent = `讀取失敗:${e.message}`; return; }
+  renderHealth(h);
+  renderJob(h.job);
+
+  const js = h.job ? h.job.state : "idle";
+  if (lastJobState === "running" && js !== "running") {
+    refreshSources();          // a job just finished — refresh the folder list
+  }
+  lastJobState = js;
+}
+
+function renderHealth(h) {
+  const g = h.gpu || {};
+  const gpuLine = g.available
+    ? `${g.name} · VRAM ${g.vram_used_mb}/${g.vram_total_mb} MB`
+    : `無 GPU${g.error ? " (" + g.error + ")" : ""}`;
+
+  const m = h.model || {};
+  const modelName = m.path ? m.path.replace(/\\/g, "/").replace(/\/$/, "").split("/").pop() : "—";
+  const modelLine = `${modelName}${m.dim ? ` · ${m.dim} 維` : ""}${m.loaded ? "" : " (未載入)"}`;
+
+  const db = h.db || {};
+  const cov = Math.round((h.coverage || 0) * 100);
+  const rows = [
+    ["GPU", gpuLine],
+    ["模型", modelLine],
+    ["照片", `${db.photos}`],
+    ["語意向量", `${db.embedded} / ${db.photos} · 覆蓋 ${cov}%`],
+    ["偵測 / 類別", `${db.detections} / ${db.classes}`],
+    ["資料夾", `${db.sources}`],
+  ];
+  wc.health.innerHTML = rows.map(([k, v]) =>
+    `<div class="row"><span class="label">${k}</span>` +
+    `<span class="value">${escHtml(v)}</span></div>`).join("");
+}
+
+const PHASE_LABEL = { scan: "偵測", embed: "語意向量", done: "" };
+const STATE_LABEL = { running: "進行中", done: "完成", cancelled: "已取消", error: "錯誤" };
+
+function renderJob(job) {
+  const running = job && job.state === "running";
+
+  // idle (or never run) → hide panel, re-enable form
+  if (!job || job.state === "idle") {
+    wc.job.classList.add("hidden");
+    setFormDisabled(false);
+    return;
+  }
+
+  wc.job.classList.remove("hidden");
+  setFormDisabled(running);
+  wc.cancel.classList.toggle("hidden", !running);
+  if (running) wc.cancel.textContent = "取消";
+
+  const total = job.total || 0;
+  const indet = running && total === 0;
+  wc.bar.classList.toggle("indeterminate", indet);
+  if (indet) {
+    wc.bar.style.width = "";
+  } else {
+    const pct = total > 0 ? Math.round((job.done / total) * 100) : (running ? 0 : 100);
+    wc.bar.style.width = pct + "%";
+  }
+  wc.bar.style.background = job.state === "error" ? "var(--warn)" : "";
+
+  const phase = PHASE_LABEL[job.phase] != null ? PHASE_LABEL[job.phase] : (job.phase || "");
+  const st = STATE_LABEL[job.state] || job.state;
+  const parts = [st];
+  if (phase) parts.push(phase);
+  if (job.message) parts.push(job.message);
+  wc.jobMsg.textContent = parts.join(" · ");
+}
+
+// ── Indexing actions ──────────────────────────────────
+function setFormDisabled(d) {
+  wc.indexNew.disabled = d;
+  wc.indexFull.disabled = d;
+  wc.path.disabled = d;
+  wc.sources.querySelectorAll(".src-reindex").forEach(b => b.disabled = d);
+}
+
+async function submitIndex(mode) {
+  const path = wc.path.value.trim();
+  if (!path) { wc.formMsg.textContent = "請先輸入資料夾路徑"; return; }
+  wc.formMsg.textContent = "啟動中…";
+  try {
+    await postJSON("/api/index", { path, mode: mode === "full" ? "full" : "new" });
+    wc.formMsg.textContent = `已開始索引(${mode === "full" ? "重掃全部" : "新照片"})✓`;
+    lastJobState = "running";
+    refreshHealth();
+  } catch (e) {
+    wc.formMsg.textContent = `錯誤:${e.message}`;
+  }
+}
+
+async function cancelJob() {
+  wc.cancel.textContent = "取消中…";
+  try { await postJSON("/api/job/cancel", {}); } catch (e) { /* ignore */ }
+  refreshHealth();
+}
+
+// Native server-side folder picker (local-desktop convenience).
+async function browseFolder() {
+  wc.formMsg.textContent = "開啟資料夾選取視窗(在執行 server 的這台機器)…";
+  try {
+    const r = await api("/api/browse-folder");
+    if (r.path) {
+      wc.path.value = r.path;
+      wc.formMsg.textContent = `已選擇:${r.path}`;
+    } else {
+      wc.formMsg.textContent = "未選擇資料夾";
+    }
+  } catch (e) {
+    wc.formMsg.textContent = `錯誤:${e.message}`;
+  }
+}
+
+// ── Sources list ──────────────────────────────────────
+async function refreshSources() {
+  let list;
+  try { list = await api("/api/sources"); }
+  catch (e) { wc.sources.innerHTML = `<em class="muted">讀取失敗:${escHtml(e.message)}</em>`; return; }
+
+  if (!list.length) {
+    wc.sources.innerHTML = `<em class="muted">尚無已索引的資料夾,先在上方新增一個。</em>`;
+    return;
+  }
+  wc.sources.innerHTML = list.map(s => {
+    const p = escHtml(s.path);
+    return `
+    <div class="src-row">
+      <div class="src-info">
+        <div class="src-path" title="${p}">${p}</div>
+        <div class="src-meta">${s.photo_count || 0} 張 · 最後索引 ${fmtTime(s.last_indexed_at)}</div>
+      </div>
+      <div class="src-actions">
+        <button class="src-reindex" data-path="${p}" data-mode="new" title="只索引新照片">🔁 新增</button>
+        <button class="src-reindex" data-path="${p}" data-mode="full" title="整個資料夾重掃">⟳ 全部</button>
+      </div>
+    </div>`;
+  }).join("");
+
+  wc.sources.querySelectorAll(".src-reindex").forEach(b =>
+    b.addEventListener("click", () => {
+      wc.path.value = b.dataset.path;
+      submitIndex(b.dataset.mode);
+    }));
+}
+
+// ── Boot ──────────────────────────────────────────────
+function bootWelcome() {
+  wc.enter.addEventListener("click", enterGallery);
+  wc.home.addEventListener("click", showWelcome);
+  wc.browse.addEventListener("click", browseFolder);
+  wc.indexNew.addEventListener("click", () => submitIndex("new"));
+  wc.indexFull.addEventListener("click", () => submitIndex("full"));
+  wc.path.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); submitIndex("new"); }
+  });
+  wc.cancel.addEventListener("click", cancelJob);
+  showWelcome();
+}
+
 // Go!
-init();
+bootWelcome();

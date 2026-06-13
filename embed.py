@@ -19,6 +19,7 @@ Usage:
 import argparse
 import logging
 import sqlite3
+import threading
 from pathlib import Path
 
 import sqlite_vec
@@ -63,6 +64,9 @@ class Embedder:
         log.info(f"Loading {model_name} on {self.device} ...")
         self.model = AutoModel.from_pretrained(model_name).to(self.device).eval()
         self.processor = AutoProcessor.from_pretrained(model_name)
+        # serialize inference: search (server thread) and indexing (worker thread)
+        # share this one model, and torch modules aren't safe to call concurrently.
+        self._lock = threading.Lock()
 
     @staticmethod
     def _pool(out):
@@ -73,18 +77,20 @@ class Embedder:
 
     @torch.inference_mode()
     def embed_images(self, images: list) -> torch.Tensor:
-        inputs = self.processor(images=images, return_tensors="pt").to(self.device)
-        feats = self._pool(self.model.get_image_features(**inputs))
-        return torch.nn.functional.normalize(feats, p=2, dim=-1).cpu()
+        with self._lock:
+            inputs = self.processor(images=images, return_tensors="pt").to(self.device)
+            feats = self._pool(self.model.get_image_features(**inputs))
+            return torch.nn.functional.normalize(feats, p=2, dim=-1).cpu()
 
     @torch.inference_mode()
     def embed_text(self, text: str) -> list:
-        # SigLIP text encoder requires max_length padding
-        inputs = self.processor(text=[text], padding="max_length",
-                                return_tensors="pt").to(self.device)
-        feats = self._pool(self.model.get_text_features(**inputs))
-        feats = torch.nn.functional.normalize(feats, p=2, dim=-1)
-        return feats[0].cpu().tolist()
+        with self._lock:
+            # SigLIP text encoder requires max_length padding
+            inputs = self.processor(text=[text], padding="max_length",
+                                    return_tensors="pt").to(self.device)
+            feats = self._pool(self.model.get_text_features(**inputs))
+            feats = torch.nn.functional.normalize(feats, p=2, dim=-1)
+            return feats[0].cpu().tolist()
 
 
 def load_image(path: Path):
@@ -96,7 +102,13 @@ def load_image(path: Path):
         return img.convert("RGB")
 
 
-def build(conn, embedder, batch_size: int):
+def build(conn, embedder, batch_size: int, progress_cb=None, cancel_cb=None):
+    """Embed all not-yet-embedded photos. Returns count embedded.
+
+    progress_cb(done, total) is called after each batch; cancel_cb() -> bool
+    is checked before each batch (a True stops early — remaining work is picked
+    up on the next run since embedding is incremental).
+    """
     # Photos that are scanned OK, file still exists, and not yet embedded
     rows = conn.execute("""
         SELECT p.id, p.path FROM photos p
@@ -109,13 +121,19 @@ def build(conn, embedder, batch_size: int):
     missing = len(rows) - len(todo)
     if missing:
         log.warning(f"{missing} photo(s) skipped (file not found on disk)")
+    total = len(todo)
+    if progress_cb:
+        progress_cb(0, total)
     if not todo:
         log.info("Nothing to embed -- index is up to date.")
-        return
+        return 0
 
-    log.info(f"Embedding {len(todo)} photo(s) (batch={batch_size}) ...")
+    log.info(f"Embedding {total} photo(s) (batch={batch_size}) ...")
     done = 0
-    for i in range(0, len(todo), batch_size):
+    for i in range(0, total, batch_size):
+        if cancel_cb and cancel_cb():
+            log.info("embed cancelled")
+            break
         chunk = todo[i:i + batch_size]
         imgs, ids = [], []
         for pid, path in chunk:
@@ -132,8 +150,11 @@ def build(conn, embedder, batch_size: int):
                          (pid, sqlite_vec.serialize_float32(vec.tolist())))
         conn.commit()
         done += len(ids)
-        log.info(f"  {done}/{len(todo)}")
+        if progress_cb:
+            progress_cb(done, total)
+        log.info(f"  {done}/{total}")
     log.info(f"Done. Embedded {done} photo(s).")
+    return done
 
 
 def search(conn, embedder, query: str, top: int):

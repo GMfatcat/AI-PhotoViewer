@@ -3,9 +3,50 @@
 <head>
 <meta charset="UTF-8">
 <title>Photo Archaeology</title>
-<link rel="stylesheet" href="style.css?v=6">
+<link rel="stylesheet" href="style.css?v=12">
 </head>
 <body>
+
+<!-- ── Welcome page (default home) ─────────────────────── -->
+<section id="welcome" class="welcome">
+  <div class="welcome-inner">
+    <h1 class="welcome-title">Photo Archaeology</h1>
+    <p class="welcome-sub">本地語意相片相簿 · YOLOE 偵測 + SigLIP 2 語意搜尋</p>
+
+    <button id="wc-enter" class="wc-enter">📂 開始檢視 相簿</button>
+
+    <div class="wc-panel">
+      <h3>➕ 新增資料夾</h3>
+      <div class="wc-form">
+        <input id="wc-path" type="text" autocomplete="off"
+               placeholder="貼上資料夾完整路徑,例如 C:\Users\You\Pictures" />
+        <button id="wc-browse" title="開啟資料夾選取視窗">📁 瀏覽…</button>
+        <button id="wc-index-new" title="只索引尚未處理的新照片">索引新照片</button>
+        <button id="wc-index-full" title="整個資料夾重掃一次">重掃全部</button>
+      </div>
+      <div id="wc-form-msg" class="wc-msg"></div>
+    </div>
+
+    <div id="wc-job" class="wc-panel wc-job hidden">
+      <h3>目前工作 <button id="wc-cancel" class="wc-cancel">取消</button></h3>
+      <div class="wc-progress"><div id="wc-bar" class="wc-bar"></div></div>
+      <div id="wc-job-msg" class="wc-msg"></div>
+    </div>
+
+    <div class="wc-panel">
+      <h3>🩺 後端狀態</h3>
+      <div id="wc-health" class="wc-health">載入中…</div>
+    </div>
+
+    <div class="wc-panel">
+      <h3>🔁 已索引資料夾</h3>
+      <div id="wc-sources" class="wc-sources">載入中…</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Gallery (shown after 開始檢視) ──────────────────── -->
+<div id="gallery" class="gallery hidden">
 
 <header class="topbar">
   <div class="brand">Photo Archaeology</div>
@@ -43,6 +84,7 @@
   <div class="stats" id="stats">loading…</div>
 
   <div class="help-group">
+    <button id="btn-home" title="回首頁">🏠</button>
     <button id="btn-help" title="使用說明">❓</button>
     <button id="btn-flow" title="架構流程圖">🗺</button>
   </div>
@@ -95,6 +137,8 @@
   <kbd>R</kbd> random  ·  click object to lock
 </footer>
 
+</div><!-- /#gallery -->
+
 <!-- Floating modal (usage / flowchart) -->
 <div id="modal-overlay" class="modal-overlay hidden">
   <div class="modal">
@@ -107,6 +151,6 @@
   </div>
 </div>
 
-<script src="app.js?v=7"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>

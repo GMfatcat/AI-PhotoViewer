@@ -11,22 +11,32 @@ import argparse
 import json
 import sqlite3
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 import sqlite_vec
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 # Allow importing embed.py (lives one dir up) for the SigLIP embedder
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import jobs  # noqa: E402  (background indexing manager, in this dir)
 
 
 # Global state set by CLI
 DB_PATH: Optional[Path] = None
 MODEL_PATH: Optional[str] = None
-_EMBEDDER = None  # lazily loaded on first /api/search
+YOLOE_PATH: Path = Path(__file__).resolve().parent.parent / "yoloe-11s-seg-pf.pt"
+_EMBEDDER = None  # SigLIP embedder (eager-loaded at startup; reused by search + indexing)
+LOG_FILE: Path = Path(__file__).parent / "server.log"  # rotating; 3 MB total cap
+DEFAULT_DIR: Path = Path(__file__).resolve().parent.parent / "default-image"  # project-local default source
+
+# Image/thumb URLs are keyed by photo_id, which is reassigned on every DB rebuild.
+# Force the browser to revalidate (via ETag) so it never displays a stale image
+# cached under an id that now points to a different file.
+NO_CACHE = {"Cache-Control": "no-cache"}
 
 
 def get_conn() -> sqlite3.Connection:
@@ -34,10 +44,33 @@ def get_conn() -> sqlite3.Connection:
         raise HTTPException(status_code=500, detail="DB not configured")
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=5000")  # tolerate writes from an indexing job
     return conn
 
 
 app = FastAPI(title="Photo Archaeology", docs_url="/docs")
+
+
+def _ver(file_hash) -> str:
+    """Content-version token for cache-busting image/thumb URLs. photo_id is
+    reused across DB rebuilds, so URLs keyed only by id can serve a stale
+    browser-cached image for a file that now lives under a different id.
+    Tying the URL to file_hash (content) makes the URL change when the file does."""
+    return (file_hash or "0")[:10]
+
+
+@app.middleware("http")
+async def no_cache_media(request, call_next):
+    """Force `Cache-Control: no-cache` on every image/thumb response, INCLUDING
+    error responses (404/410). Error responses go through the exception handler,
+    which doesn't carry the per-FileResponse headers — so a transient "file
+    missing" 410 would otherwise get browser-cached and keep showing a broken
+    thumbnail even after the file is restored (same id+hash → same URL)."""
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/api/image") or path.startswith("/api/thumb"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 def containment_ratio(b1: dict, b2: dict) -> float:
@@ -128,7 +161,7 @@ def list_photos(
     try:
         if cls:
             rows = conn.execute("""
-                SELECT DISTINCT p.id, p.path, p.taken_at
+                SELECT DISTINCT p.id, p.path, p.taken_at, p.file_hash
                 FROM photos p
                 JOIN detections d ON d.photo_id = p.id
                 WHERE p.processed_at IS NOT NULL AND p.error IS NULL
@@ -138,12 +171,13 @@ def list_photos(
             """, (cls, min_conf, limit)).fetchall()
         else:
             rows = conn.execute("""
-                SELECT id, path, taken_at FROM photos
+                SELECT id, path, taken_at, file_hash FROM photos
                 WHERE processed_at IS NOT NULL AND error IS NULL
                 ORDER BY id DESC
                 LIMIT ?
             """, (limit,)).fetchall()
-        return [{"id": r["id"], "name": Path(r["path"]).name, "taken_at": r["taken_at"]}
+        return [{"id": r["id"], "name": Path(r["path"]).name, "taken_at": r["taken_at"],
+                 "v": _ver(r["file_hash"])}
                 for r in rows]
     finally:
         conn.close()
@@ -165,7 +199,7 @@ def get_photo(
     try:
         photo_row = conn.execute("""
             SELECT id, path, width, height, taken_at, gps_lat, gps_lon,
-                   camera_make, camera_model
+                   camera_make, camera_model, file_hash
             FROM photos WHERE id = ?
         """, (photo_id,)).fetchone()
         if not photo_row:
@@ -205,7 +239,7 @@ def get_photo(
         return {
             "id": photo_row["id"],
             "name": photo_path.name,
-            "image_url": f"/api/image/{photo_id}",
+            "image_url": f"/api/image/{photo_id}?v={_ver(photo_row['file_hash'])}",
             "width": photo_row["width"], "height": photo_row["height"],
             "taken_at": photo_row["taken_at"],
             "gps": ({"lat": photo_row["gps_lat"], "lon": photo_row["gps_lon"]}
@@ -258,9 +292,10 @@ def get_image(photo_id: int):
                 img.save(buf, format="JPEG", quality=88)
                 buf.seek(0)
                 from fastapi.responses import Response
-                return Response(content=buf.read(), media_type="image/jpeg")
+                return Response(content=buf.read(), media_type="image/jpeg",
+                                headers=NO_CACHE)
 
-        return FileResponse(photo_path, media_type=media_type)
+        return FileResponse(photo_path, media_type=media_type, headers=NO_CACHE)
     finally:
         conn.close()
 
@@ -272,6 +307,7 @@ def vec_conn() -> sqlite3.Connection:
         raise HTTPException(status_code=500, detail="DB not configured")
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
@@ -279,11 +315,12 @@ def vec_conn() -> sqlite3.Connection:
 
 
 def get_embedder():
-    """Lazily load the SigLIP embedder on first search (keeps startup fast)."""
+    """Return the shared SigLIP embedder (loaded once; reused by search + indexing)."""
     global _EMBEDDER
     if _EMBEDDER is None:
         import embed  # reuse the same Embedder as embed.py
         _EMBEDDER = embed.Embedder(MODEL_PATH)
+        _EMBEDDER.dim = len(_EMBEDDER.embed_text("dimension probe"))
     return _EMBEDDER
 
 
@@ -305,14 +342,16 @@ def search_photos(
                                 detail="Semantic index not built (run embed.py first)")
         qvec = get_embedder().embed_text(q)
         rows = conn.execute("""
-            SELECT v.photo_id AS id, v.distance AS dist, p.path AS path, p.taken_at AS taken_at
+            SELECT v.photo_id AS id, v.distance AS dist, p.path AS path,
+                   p.taken_at AS taken_at, p.file_hash AS file_hash
             FROM vec_photos v
             JOIN photos p ON p.id = v.photo_id
             WHERE v.embedding MATCH ? AND k = ?
             ORDER BY v.distance
         """, (sqlite_vec.serialize_float32(qvec), top)).fetchall()
         results = [{"id": r["id"], "name": Path(r["path"]).name,
-                    "taken_at": r["taken_at"], "sim": round(1.0 - r["dist"], 3)}
+                    "taken_at": r["taken_at"], "sim": round(1.0 - r["dist"], 3),
+                    "v": _ver(r["file_hash"])}
                    for r in rows]
         # Relative threshold: SigLIP sims are narrow, so cut the tail by a fraction
         # of the best score rather than an unreliable absolute value.
@@ -342,9 +381,14 @@ def get_thumb(photo_id: int, size: int = Query(240, le=512)):
         raise HTTPException(status_code=410, detail="Photo file missing")
 
     THUMB_DIR.mkdir(exist_ok=True)
-    cache = THUMB_DIR / f"{photo_id}_{size}.jpg"
+    # Key the cache by file PATH, not photo_id: ids are reassigned when the DB is
+    # rebuilt, so a photo_id-keyed cache would serve a stale thumbnail for a file
+    # that now lives under a different id. (mtime check below still catches edits.)
+    import hashlib
+    key = hashlib.md5(str(src).encode("utf-8")).hexdigest()[:16]
+    cache = THUMB_DIR / f"{key}_{size}.jpg"
     if cache.exists() and cache.stat().st_mtime >= src.stat().st_mtime:
-        return FileResponse(cache, media_type="image/jpeg")
+        return FileResponse(cache, media_type="image/jpeg", headers=NO_CACHE)
 
     from PIL import Image, ImageOps
     try:
@@ -361,7 +405,139 @@ def get_thumb(photo_id: int, size: int = Query(240, le=512)):
             img = img.convert("RGB")
         img.thumbnail((size, size), Image.LANCZOS)
         img.save(cache, format="JPEG", quality=82)
-    return FileResponse(cache, media_type="image/jpeg")
+    return FileResponse(cache, media_type="image/jpeg", headers=NO_CACHE)
+
+
+# ── Welcome page: health, sources, indexing jobs ─────────
+@app.get("/api/health")
+def health():
+    gpu = {"available": False}
+    try:
+        import torch
+        if torch.cuda.is_available():
+            free, total = torch.cuda.mem_get_info()
+            gpu = {"available": True, "name": torch.cuda.get_device_name(0),
+                   "vram_total_mb": round(total / 1048576),
+                   "vram_used_mb": round((total - free) / 1048576)}
+    except Exception as e:                       # noqa: BLE001
+        gpu = {"available": False, "error": str(e)}
+
+    conn = get_conn()
+    try:
+        jobs.ensure_sources_table(conn)
+        photos = conn.execute("SELECT COUNT(*) FROM photos "
+                              "WHERE processed_at IS NOT NULL AND error IS NULL").fetchone()[0]
+        detections = conn.execute("SELECT COUNT(*) FROM detections").fetchone()[0]
+        classes = conn.execute("SELECT COUNT(DISTINCT class) FROM detections").fetchone()[0]
+        n_sources = conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
+        has_vec = conn.execute("SELECT 1 FROM sqlite_master "
+                               "WHERE type='table' AND name='vec_photos'").fetchone()
+    finally:
+        conn.close()
+
+    # vec_photos is a vec0 virtual table → needs a connection with the
+    # sqlite-vec extension loaded (a plain get_conn() raises "no such module: vec0").
+    embedded = 0
+    if has_vec:
+        try:
+            vconn = vec_conn()
+            try:
+                embedded = vconn.execute("SELECT COUNT(*) FROM vec_photos").fetchone()[0]
+            finally:
+                vconn.close()
+        except Exception:                            # noqa: BLE001
+            embedded = 0
+
+    model = {"path": MODEL_PATH, "loaded": _EMBEDDER is not None,
+             "dim": getattr(_EMBEDDER, "dim", None) if _EMBEDDER is not None else None}
+    return {
+        "gpu": gpu,
+        "model": model,
+        "db": {"photos": photos, "embedded": embedded, "detections": detections,
+               "classes": classes, "sources": n_sources},
+        "coverage": round(embedded / photos, 3) if photos else 0.0,
+        "job": jobs.current_job(),
+    }
+
+
+@app.get("/api/sources")
+def sources():
+    conn = get_conn()
+    try:
+        return jobs.list_sources(conn)
+    finally:
+        conn.close()
+
+
+@app.post("/api/index")
+def start_index(payload: dict = Body(...)):
+    path = (payload or {}).get("path", "").strip().strip('"')
+    mode = (payload or {}).get("mode", "new")
+    if not path:
+        raise HTTPException(status_code=400, detail="path required")
+    p = Path(path)
+    if not p.exists() or not p.is_dir():
+        raise HTTPException(status_code=400, detail=f"not a directory: {path}")
+    job = jobs.start_index(p, DB_PATH, YOLOE_PATH, get_embedder,
+                           mode=("reindex-full" if mode == "full" else "new"))
+    if job is None:
+        raise HTTPException(status_code=409, detail="an index job is already running")
+    return job
+
+
+@app.get("/api/job")
+def job():
+    return jobs.current_job() or {"state": "idle"}
+
+
+@app.post("/api/job/cancel")
+def cancel_job():
+    return {"cancelled": jobs.request_cancel()}
+
+
+@app.get("/api/browse-folder")
+async def browse_folder():
+    """Open a native folder picker on the SERVER machine and return the chosen
+    absolute path. Convenience for the local-desktop case (server == client).
+    Runs on the event-loop thread so tkinter stays on the process main thread;
+    the modal briefly blocks other requests, which is fine for a single user.
+    """
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        path = filedialog.askdirectory(title="選擇要索引的資料夾")
+        root.destroy()
+        return {"path": path or None}
+    except Exception as e:                       # noqa: BLE001
+        raise HTTPException(status_code=500,
+                            detail=f"無法開啟資料夾對話框:{e}")
+
+
+def ensure_default_source():
+    """Register the project-local default-image folder as a source, so it always
+    shows up on the welcome page list — even before it has been indexed."""
+    try:
+        DEFAULT_DIR.mkdir(exist_ok=True)
+    except Exception as e:                       # noqa: BLE001
+        print(f"WARNING: could not create {DEFAULT_DIR}: {e}")
+        return
+    conn = get_conn()
+    try:
+        jobs.ensure_sources_table(conn)
+        p = str(DEFAULT_DIR.resolve())
+        if not conn.execute("SELECT 1 FROM sources WHERE path = ?", (p,)).fetchone():
+            cnt = conn.execute("SELECT COUNT(*) FROM photos WHERE path LIKE ?",
+                               (p + "%",)).fetchone()[0]
+            conn.execute(
+                "INSERT INTO sources(path, added_at, last_indexed_at, photo_count) "
+                "VALUES (?, ?, ?, ?)",
+                (p, datetime.now().isoformat(timespec="seconds"), None, cnt))
+            conn.commit()
+    finally:
+        conn.close()
 
 
 # Static files served at root (/, /app.js, /style.css)
@@ -389,10 +565,45 @@ def main():
     MODEL_PATH = args.model
     print(f"DB: {DB_PATH}")
     print(f"Search model: {MODEL_PATH}")
-    print(f"Open http://{args.host}:{args.port}/ in your browser")
+    try:
+        print("Loading SigLIP model ...")
+        get_embedder()
+        print(f"Model ready (dim={_EMBEDDER.dim}).")
+    except Exception as e:                       # noqa: BLE001
+        print(f"WARNING: model not loaded — search/indexing will fail: {e}")
 
+    ensure_default_source()
+    print(f"Default source folder: {DEFAULT_DIR}")
+    print(f"Open http://{args.host}:{args.port}/ in your browser")
+    print(f"Logs (rotating, 3 MB cap): {LOG_FILE}")
+
+    import copy
     import uvicorn
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    from uvicorn.config import LOGGING_CONFIG
+
+    # Keep uvicorn's console output, but also tee logs to a rotating file.
+    # 1 MB per file + 2 backups = 3 MB total on disk, never more.
+    log_config = copy.deepcopy(LOGGING_CONFIG)
+    log_config["formatters"]["file"] = {
+        "()": "logging.Formatter",
+        "fmt": "%(asctime)s %(levelname)s %(name)s %(message)s",
+        "datefmt": "%Y-%m-%d %H:%M:%S",
+    }
+    log_config["handlers"]["file"] = {
+        "class": "logging.handlers.RotatingFileHandler",
+        "filename": str(LOG_FILE),
+        "maxBytes": 1024 * 1024,   # 1 MB per file
+        "backupCount": 2,          # + 2 rotated backups → 3 MB total cap
+        "encoding": "utf-8",
+        "formatter": "file",
+    }
+    # uvicorn.error propagates up to "uvicorn", so the file handler on these two
+    # captures startup, errors, and access logs.
+    for lname in ("uvicorn", "uvicorn.access"):
+        log_config["loggers"][lname]["handlers"].append("file")
+
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info",
+                log_config=log_config)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,14 @@ photos.db-shm
 .thumbs/
 busy/
 
+# Server logs (rotating)
+web_demo/server.log
+web_demo/server.log.*
+
+# Default sample image folder — keep the dir, not the photos
+default-image/*
+!default-image/.gitkeep
+
 # Model weights (large, downloadable)
 *.pt
 models/
