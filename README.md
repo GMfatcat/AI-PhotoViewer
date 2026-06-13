@@ -2,7 +2,15 @@
 
 [English](README.en.md) | **繁體中文**
 
+<p align="center">
+  <img src="repo-cover.png" alt="AI-PhotoViewer — 本地、隱私優先的語意相片搜尋 (YOLOE + SigLIP 2)" width="820">
+</p>
+
 一個**本地、隱私優先**的相片瀏覽器,結合 **YOLOE 開放詞彙物件偵測** 與 **SigLIP 2 自然語言語意搜尋**(支援中文與英文)。掃描資料夾一次,之後就能用「**語意**」找照片 —— `兩個女生`、`海邊日落`、`a laptop on a desk` —— 並用互動式遮罩檢視每個偵測到的物件。全部在你的 GPU 上本地運行,資料不外傳。
+
+<p align="center">
+  <img src="demo.png" alt="Web UI:結果網格 · 相片檢視 · 偵測面板" width="900">
+</p>
 
 ## 功能特色
 

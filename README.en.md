@@ -2,7 +2,15 @@
 
 **English** | [繁體中文](README.md)
 
+<p align="center">
+  <img src="repo-cover.png" alt="AI-PhotoViewer — local, private semantic photo search (YOLOE + SigLIP 2)" width="820">
+</p>
+
 A local, privacy-first photo browser that combines **YOLOE open-vocabulary object detection** with **SigLIP 2 natural-language semantic search** (Chinese & English). Scan a folder once, then find photos by *meaning* — `two girls`, `海邊日落`, `a laptop on a desk` — and inspect every detected object with interactive masks. Everything runs locally on your GPU; nothing leaves the machine.
+
+<p align="center">
+  <img src="demo.png" alt="Web UI: results grid · photo viewer · detection inspector" width="900">
+</p>
 
 ## Features
 
