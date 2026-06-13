@@ -1,4 +1,4 @@
-# Core (scan + inspect)
+# Core: scan + detection
 ultralytics>=8.3.0
 Pillow>=10.0.0
 pillow-heif>=0.16.0
@@ -7,3 +7,13 @@ tqdm>=4.65.0
 # Web demo
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
+
+# Semantic search (SigLIP 2 embeddings + vector store)
+transformers>=5.0.0
+sentence-transformers>=5.0.0
+sqlite-vec>=0.1.6
+
+# NOTE: torch + torchvision are intentionally NOT pinned here — install them FIRST
+# from the CUDA build that matches your GPU, then run `pip install -r requirements.txt`.
+# RTX 50-series (Blackwell) needs cu128:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128

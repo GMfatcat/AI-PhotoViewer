@@ -1,150 +1,106 @@
-# Photo Archaeology — Scanner
+# AI-PhotoViewer
 
-A tool to scan your photo library with **YOLOE open-vocabulary detection**
-and store results in SQLite for later analysis.
+**English** | [繁體中文](README.zh-Hant.md)
 
-Built for the "what's actually in my last few years of photos" question —
-scan once, query forever.
+A local, privacy-first photo browser that combines **YOLOE open-vocabulary object detection** with **SigLIP 2 natural-language semantic search** (Chinese & English). Scan a folder once, then find photos by *meaning* — `two girls`, `海邊日落`, `a laptop on a desk` — and inspect every detected object with interactive masks. Everything runs locally on your GPU; nothing leaves the machine.
+
+## Features
+
+- 🔍 **Semantic search (zh/en)** — type natural language, get ranked photos (SigLIP 2 embeddings + sqlite-vec)
+- 🏷️ **Open-vocabulary detection** — YOLOE labels + segmentation masks per photo
+- 🖼️ **Results grid** — thumbnails with similarity scores; click to inspect
+- 🎯 **Detection inspector** — hover / lock object masks on a canvas
+- 🎲 **Shuffle + pagination** — browse in random order, page through, adjustable page size
+- 🎚️ **Top-N + threshold** — control how many results and how relevant
+- 100% local · single SQLite file · runs on one GPU
+
+## Pipeline
+
+```
+your image folder
+   ──► scan.py    YOLOE-11s-seg-pf: detect + segment      ──► photos.db (SQLite)
+   ──► embed.py   SigLIP 2: image → vector                ──► vec_photos (sqlite-vec)
+   ──► web_demo   FastAPI: /api/search /api/photos ...     ──► browser UI
+```
+
+## Requirements
+
+- NVIDIA GPU (developed on RTX 5070 Ti, Blackwell)
+- Python 3.12 (Windows or Linux)
+- ~1.5–4.5 GB disk for a SigLIP model
 
 ## Setup
 
 ```bash
-# Recommended: virtual env
-python -m venv venv
-source venv/bin/activate              # macOS / Linux
-# venv\Scripts\activate               # Windows
+# 1) Create a virtual env (uv recommended; plain `python -m venv` works too)
+uv venv
 
-pip install -r requirements.txt
+# 2) Install PyTorch FIRST, matching your GPU.
+#    RTX 50-series (Blackwell) needs cu128:
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+
+# 3) Install the rest
+uv pip install -r requirements.txt
 ```
 
-GPU is automatic if PyTorch sees CUDA. On RTX 3060 laptop expect
-~100-200 photos/minute with default settings.
+### Download a SigLIP 2 model
+
+Put a model directory somewhere (e.g. `../models/`) and point `embed.py` / the server at it:
+
+| Model | Dim | Size | Notes |
+|-------|-----|------|-------|
+| `google/siglip2-base-patch16-224` | 768 | ~1.4 GB | fast |
+| `google/siglip2-so400m-patch14-384` | 1152 | ~4.2 GB | better, esp. **Chinese** |
+
+> If HuggingFace downloads hang (Xet protocol), set `HF_HUB_DISABLE_XET=1`, or download the
+> files directly with `curl -L -C - --retry 40 <resolve-url>` into a local folder.
 
 ## Usage
 
 ```bash
-# Test pipeline first with 100 photos
-python scan.py /path/to/photos --limit 100
+# 1) Scan a photo folder (incremental & resumable)
+python scan.py "C:\path\to\your\photos"
 
-# Then run full library
-python scan.py /path/to/photos
+# 2) Build the semantic index (incremental — only embeds new photos)
+python embed.py --model ..\models\siglip2-so400m
 
-# Quick sanity check
-python inspect_db.py
+# 3) Launch the web UI
+python web_demo\main.py --db photos.db --model ..\models\siglip2-so400m
+# open http://127.0.0.1:8000
 ```
 
-### Options
+Switching to a model with a different dimension: `python embed.py --model <dir> --rebuild`.
+Quick CLI search without the web UI: `python embed.py --search "海邊" --model <dir>`.
+
+## Web UI guide
+
+- **Search box** (zh/en) + `top` (how many) + `threshold` (absolute similarity cutoff — the number
+  matches the green badge on each thumbnail; far-left = show all)
+- **Results grid** (left): thumbnails + similarity; `🎲` reshuffle · `‹ ›` prev/next set · page-size 10–40
+- **Filter**: narrow by YOLOE-detected class
+- **Inspector** (right): hover an object to highlight its mask, click to lock; full detection list
+- **❓** usage modal (zh / EN toggle) · **🗺** pipeline diagram
+- Shortcuts: `←` `→` change photo · `R` random · `Esc` unlock / close window
+
+> SigLIP similarity scores are small in absolute terms (~0.04–0.11) and clustered — what matters is the
+> *ranking*, not the raw number.
+
+## Project structure
 
 ```
-positional:
-  photo_dir              Root directory of photos (recursive)
-
-optional:
-  --db PATH              SQLite DB path (default: photos.db)
-  --model NAME           YOLOE weights (default: yoloe-11s-seg-pf.pt)
-  --conf FLOAT           Confidence threshold (default: 0.25)
-  --device cuda|cpu      (default: cuda)
-  --rescan               Reprocess all photos
-  --limit N              Process at most N (for testing)
+scan.py            YOLOE detection + masks  → photos.db
+embed.py           SigLIP 2 embeddings      → vec_photos   (also: --search CLI, --rebuild)
+inspect_db.py      DB stats / co-occurrence
+add_masks.py       backfill masks for existing rows
+web_demo/
+  main.py          FastAPI server + REST API (/api/search, /api/photos, /api/thumb, ...)
+  static/          index.html · app.js · style.css
+requirements.txt
 ```
 
-### Resumable
+## Notes
 
-The scanner records `processed_at` per photo. If interrupted (Ctrl+C,
-crash, laptop sleep), just rerun the same command — it skips done photos.
-
-## Model selection
-
-Default `yoloe-11s-seg-pf.pt`:
-- **YOLOE** = open-vocabulary YOLO
-- **11s** = v11 backbone, small variant
-- **seg** = supports segmentation (only detection used here)
-- **-pf** = **prompt-free** mode, uses YOLOE's built-in vocabulary
-  of thousands of categories
-
-For your first scan, prompt-free is what you want — you don't have to
-guess class names in advance.
-
-Other options:
-
-```bash
-# Better quality, slower (~2x)
-python scan.py /path/to/photos --model yoloe-11m-seg-pf.pt
-
-# Highest quality, slow (~4x)
-python scan.py /path/to/photos --model yoloe-11l-seg-pf.pt
-
-# Try YOLO26 backbone (requires recent Ultralytics)
-python scan.py /path/to/photos --model yoloe-26s-seg-pf.pt
-```
-
-First run downloads model from Ultralytics automatically.
-
-## After scanning
-
-`inspect_db.py` shows:
-- Overview stats (photos, detections, classes, date range, GPS coverage)
-- Top N classes with instance + photo counts
-- 5 "busiest" photos (most objects detected)
-- Rare classes (only in 1-2 photos) — usually the most interesting finds
-
-```bash
-python inspect_db.py --top 100 --min-conf 0.3
-```
-
-## Schema
-
-`photos.db` SQLite file with two tables:
-
-**`photos`** — one row per image
-```
-id, path, file_hash, taken_at, width, height,
-gps_lat, gps_lon, camera_make, camera_model,
-file_size, processed_at, error
-```
-
-**`detections`** — one row per detected object (many per photo)
-```
-id, photo_id, class, confidence,
-bbox_x, bbox_y, bbox_w, bbox_h,    -- normalized 0-1
-bbox_area_ratio                     -- bbox area / image area
-```
-
-All bbox coords are **normalized** (0-1), so they work regardless of
-original image dimensions.
-
-## Performance notes
-
-- Images are auto-resized to `RESIZE_LONGEST` (640 by default) before
-  detection. Edit this constant in `scan.py` for higher quality.
-- HEIC files need `pillow-heif`. Already in requirements.
-- WAL journal mode is enabled — DB stays consistent even on crash.
-
-## Troubleshooting
-
-**CUDA out of memory**:
-Lower `RESIZE_LONGEST` to 512 in `scan.py`, or use `--device cpu`.
-
-**Model not found**:
-Ultralytics auto-downloads on first use. Check internet, or manually
-download the `.pt` file from Ultralytics docs.
-
-**HEIC files skipped**:
-```bash
-pip install pillow-heif
-```
-
-**Lots of photos fail**:
-Check what's in `photos.error` column:
-```bash
-sqlite3 photos.db "SELECT path, error FROM photos WHERE error IS NOT NULL LIMIT 20"
-```
-
-## Next steps
-
-After scan completes:
-1. `python inspect_db.py` — sanity check
-2. **(coming next)** `analyze.py` — co-occurrence analysis, PMI scoring,
-   time-series breakdown
-3. **(coming next)** `report.py` — generate HTML report with charts
-   and thumbnail galleries
+- **Blackwell (RTX 50xx)** GPUs require PyTorch **cu128** wheels — the default PyPI build won't use the GPU.
+- The vector index lives **inside `photos.db`** (sqlite-vec) — one file, easy to back up.
+- `photos.db`, SigLIP weights (`models/`, `*.pt`), the venv and generated thumbnails are git-ignored.
+- The SigLIP 2 weights are subject to Google's model license; YOLOE/Ultralytics under AGPL-3.0.
