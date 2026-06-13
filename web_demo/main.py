@@ -22,7 +22,8 @@ from fastapi.staticfiles import StaticFiles
 
 # Allow importing embed.py (lives one dir up) for the SigLIP embedder
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import jobs  # noqa: E402  (background indexing manager, in this dir)
+import jobs     # noqa: E402  (background indexing manager, in this dir)
+import caption  # noqa: E402  (optional VLM captioning + FTS storage)
 
 
 # Global state set by CLI
@@ -30,6 +31,8 @@ DB_PATH: Optional[Path] = None
 MODEL_PATH: Optional[str] = None
 YOLOE_PATH: Path = Path(__file__).resolve().parent.parent / "yoloe-11s-seg-pf.pt"
 _EMBEDDER = None  # SigLIP embedder (eager-loaded at startup; reused by search + indexing)
+CAPTION_CFG: dict = {"backend": "none"}  # set by CLI; controls optional captioning
+_CAPTIONER = "unset"  # lazy: "unset" -> not built yet; None -> disabled/failed; else instance
 LOG_FILE: Path = Path(__file__).parent / "server.log"  # rotating; 3 MB total cap
 DEFAULT_DIR: Path = Path(__file__).resolve().parent.parent / "default-image"  # project-local default source
 
@@ -248,6 +251,7 @@ def get_photo(
                        f"{photo_row['camera_model'] or ''}").strip() or None,
             "detections": detections,
             "suppressed_count": suppressed,
+            "caption": caption.get_caption(conn, photo_id),
         }
     finally:
         conn.close()
@@ -324,6 +328,23 @@ def get_embedder():
     return _EMBEDDER
 
 
+def get_captioner():
+    """Lazily build the optional captioner from CAPTION_CFG. Returns None when
+    disabled or if construction fails (so captioning degrades, never crashes)."""
+    global _CAPTIONER
+    if _CAPTIONER == "unset":
+        if CAPTION_CFG.get("backend", "none") == "none":
+            _CAPTIONER = None
+        else:
+            try:
+                _CAPTIONER = caption.make_captioner(**CAPTION_CFG)
+                print(f"Captioner ready: backend={CAPTION_CFG['backend']}")
+            except Exception as e:                # noqa: BLE001
+                print(f"WARNING: captioner disabled (build failed): {e}")
+                _CAPTIONER = None
+    return _CAPTIONER
+
+
 @app.get("/api/search")
 def search_photos(
     q: str = Query(..., min_length=1, description="Natural-language query (zh/en)"),
@@ -358,6 +379,30 @@ def search_photos(
         if results and min_ratio > 0:
             cutoff = results[0]["sim"] * min_ratio
             results = [r for r in results if r["sim"] >= cutoff]
+        return results
+    finally:
+        conn.close()
+
+
+@app.get("/api/search_text")
+def search_text(
+    q: str = Query(..., min_length=1, description="Keyword/description query (zh/en)"),
+    top: int = Query(50, le=200),
+):
+    """Keyword search over VLM captions (optional feature). Same result shape as
+    /api/photos, plus `caption`. Empty list if captioning was never run."""
+    conn = get_conn()
+    try:
+        results = []
+        for pid, cap_text in caption.search_captions(conn, q, top=top):
+            row = conn.execute(
+                "SELECT id, path, taken_at, file_hash FROM photos WHERE id = ?",
+                (pid,)).fetchone()
+            if not row:
+                continue
+            results.append({"id": row["id"], "name": Path(row["path"]).name,
+                            "taken_at": row["taken_at"], "v": _ver(row["file_hash"]),
+                            "caption": cap_text})
         return results
     finally:
         conn.close()
@@ -447,6 +492,7 @@ def health():
         n_sources = conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
         has_vec = conn.execute("SELECT 1 FROM sqlite_master "
                                "WHERE type='table' AND name='vec_photos'").fetchone()
+        n_captions = caption.caption_count(conn)
     finally:
         conn.close()
 
@@ -465,12 +511,15 @@ def health():
 
     model = {"path": MODEL_PATH, "loaded": _EMBEDDER is not None,
              "dim": getattr(_EMBEDDER, "dim", None) if _EMBEDDER is not None else None}
+    cap_backend = CAPTION_CFG.get("backend", "none")
     return {
         "gpu": gpu,
         "model": model,
         "db": {"photos": photos, "embedded": embedded, "detections": detections,
                "classes": classes, "sources": n_sources},
         "coverage": round(embedded / photos, 3) if photos else 0.0,
+        "caption": {"backend": cap_backend, "enabled": cap_backend != "none",
+                    "count": n_captions},
         "job": jobs.current_job(),
     }
 
@@ -494,7 +543,8 @@ def start_index(payload: dict = Body(...)):
     if not p.exists() or not p.is_dir():
         raise HTTPException(status_code=400, detail=f"not a directory: {path}")
     job = jobs.start_index(p, DB_PATH, YOLOE_PATH, get_embedder,
-                           mode=("reindex-full" if mode == "full" else "new"))
+                           mode=("reindex-full" if mode == "full" else "new"),
+                           get_captioner=get_captioner)
     if job is None:
         raise HTTPException(status_code=409, detail="an index job is already running")
     return job
@@ -621,6 +671,17 @@ def main():
     ap.add_argument("--host", default="127.0.0.1",
                     help="Bind address (use 0.0.0.0 for LAN)")
     ap.add_argument("--port", type=int, default=8000)
+    # Optional VLM captioning (off by default — the app is unaffected when 'none')
+    ap.add_argument("--caption-backend", choices=["none", "local", "api"], default="none",
+                    help="Optional image captioning: 'local' (tiny in-process VLM) "
+                         "or 'api' (OpenAI-compatible endpoint). Default off.")
+    ap.add_argument("--caption-model", default=None,
+                    help="local backend: HF id or dir (default microsoft/Florence-2-base)")
+    ap.add_argument("--caption-api-url", default=None,
+                    help="api backend: OpenAI base, e.g. http://127.0.0.1:11434/v1")
+    ap.add_argument("--caption-api-model", default=None,
+                    help="api backend: model name served by the endpoint")
+    ap.add_argument("--caption-api-key", default=None, help="api backend: optional bearer key")
     args = ap.parse_args()
 
     if not args.db.exists():
@@ -630,11 +691,15 @@ def main():
         import scan
         scan.init_db(args.db.resolve()).close()
 
-    global DB_PATH, MODEL_PATH
+    global DB_PATH, MODEL_PATH, CAPTION_CFG
     DB_PATH = args.db.resolve()
     MODEL_PATH = args.model
+    CAPTION_CFG = {"backend": args.caption_backend, "model": args.caption_model,
+                   "api_url": args.caption_api_url, "api_model": args.caption_api_model,
+                   "api_key": args.caption_api_key}
     print(f"DB: {DB_PATH}")
     print(f"Search model: {MODEL_PATH}")
+    print(f"Caption backend: {args.caption_backend}")
     try:
         print("Loading SigLIP model ...")
         get_embedder()

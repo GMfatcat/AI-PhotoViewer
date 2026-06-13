@@ -38,6 +38,9 @@ const els = {
   searchTop: document.getElementById("search-top"),
   searchThr: document.getElementById("search-thr"),
   thrVal: document.getElementById("thr-val"),
+  searchMode: document.getElementById("search-mode"),
+  searchModeWrap: document.getElementById("search-mode-wrap"),
+  photoCaption: document.getElementById("photo-caption"),
   resultsGrid: document.getElementById("results-grid"),
   btnShuffle: document.getElementById("btn-shuffle"),
   btnPagePrev: document.getElementById("btn-page-prev"),
@@ -97,6 +100,14 @@ async function reloadGalleryData() {
     }
   } catch (e) { console.warn("class list:", e); }
 
+  // Show the 語意/描述 mode toggle only when captions exist (optional feature).
+  try {
+    const h = await api("/api/health");
+    const capOn = !!(h.caption && h.caption.enabled && h.caption.count > 0);
+    els.searchModeWrap.style.display = capOn ? "" : "none";
+    if (!capOn) els.searchMode.value = "semantic";
+  } catch (e) { els.searchModeWrap.style.display = "none"; }
+
   await loadPhotoList("");
 }
 
@@ -120,6 +131,7 @@ async function init() {
   });
   // top-N changes the number fetched → re-query. Threshold filters client-side (live).
   els.searchTop.addEventListener("change", () => { if (els.searchInput.value.trim()) runSearch(); });
+  els.searchMode.addEventListener("change", () => { if (els.searchInput.value.trim()) runSearch(); });
   els.searchThr.addEventListener("input", () => applyThreshold(false));   // live while dragging
   els.searchThr.addEventListener("change", () => applyThreshold(true));   // load detail on release
   els.btnShuffle.addEventListener("click", shuffleBrowse);
@@ -255,6 +267,7 @@ function randomPhoto() {
 async function runSearch() {
   const q = els.searchInput.value.trim();
   if (!q) { clearSearch(); return; }
+  if (els.searchMode && els.searchMode.value === "text") { runTextSearch(q); return; }
   els.classFilter.value = "";        // search overrides class filter
   els.stats.textContent = `🔍 searching "${q}"…`;
   const params = new URLSearchParams({ q });
@@ -274,6 +287,26 @@ async function runSearch() {
   applyThreshold(true);
 }
 
+// ── Description (caption) search — optional feature ───────
+async function runTextSearch(q) {
+  els.classFilter.value = "";
+  els.stats.textContent = `🔤 描述搜尋 "${q}"…`;
+  let list;
+  try {
+    list = await api("/api/search_text?" + new URLSearchParams({ q, top: "100" }));
+  } catch (e) {
+    els.stats.textContent = `search error: ${e.message}`;
+    return;
+  }
+  state.searchResults = list;     // reuse so clearSearch / threshold-guard work
+  state.lastQuery = q;
+  els.thrVal.textContent = "—";   // threshold doesn't apply to text results
+  els.stats.textContent = `🔤 "${q}" · ${list.length} results`;
+  state.fullList = list;
+  state.page = 0;
+  renderPage(true);
+}
+
 // Set the threshold slider's range to the actual sim span of these results, so the
 // slider value is an ABSOLUTE sim cutoff that matches the green badges exactly.
 function configureThresholdSlider(list) {
@@ -288,10 +321,11 @@ function configureThresholdSlider(list) {
 
 // Keep results whose absolute sim >= the slider value (matches the badge numbers).
 function applyThreshold(loadDetail) {
+  if (!state.searchResults.length) return;
+  if (state.searchResults[0].sim == null) return;   // text-search results have no sim
   const cutoff = parseFloat(els.searchThr.value) || 0;
   const lo = parseFloat(els.searchThr.min) || 0;
   els.thrVal.textContent = cutoff <= lo ? "off" : "≥" + cutoff.toFixed(2);
-  if (!state.searchResults.length) return;
   const list = state.searchResults.filter(r => r.sim >= cutoff);
   els.stats.textContent = `🔍 "${state.lastQuery}" · ${list.length} results`;
   state.fullList = list;
@@ -512,6 +546,11 @@ function renderPhotoMeta() {
     .map(([k, v]) => `<div class="row"><span class="label">${k}</span>` +
                      `<span class="value">${v}</span></div>`)
     .join("");
+  // optional VLM caption (only shown when present)
+  if (els.photoCaption) {
+    els.photoCaption.innerHTML = p.caption
+      ? `<h3>描述</h3><div class="cap-text">${escHtml(p.caption)}</div>` : "";
+  }
 }
 
 function updateHoverInfo() {

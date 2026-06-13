@@ -11,8 +11,9 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import scan    # noqa: E402  (YOLOE detection helpers + schema)
-import embed   # noqa: E402  (SigLIP embedder + sqlite-vec helpers)
+import scan     # noqa: E402  (YOLOE detection helpers + schema)
+import embed    # noqa: E402  (SigLIP embedder + sqlite-vec helpers)
+import caption  # noqa: E402  (optional VLM captioning + FTS storage)
 
 _job = None                       # the current/last job (a plain dict)
 _start_lock = threading.Lock()
@@ -63,14 +64,15 @@ def list_sources(conn):
 
 
 def delete_photos(conn, ids):
-    """Delete photo rows + their detections/masks. FK cascade isn't enabled, so
-    delete manually. Caller commits. vec_photos must be cleaned separately with a
-    sqlite-vec connection. Returns the number of rows targeted."""
+    """Delete photo rows + their detections/masks/captions. FK cascade isn't
+    enabled, so delete manually. Caller commits. vec_photos must be cleaned
+    separately with a sqlite-vec connection. Returns the number of rows targeted."""
     for pid in ids:
         conn.execute("DELETE FROM masks WHERE detection_id IN "
                      "(SELECT id FROM detections WHERE photo_id = ?)", (pid,))
         conn.execute("DELETE FROM detections WHERE photo_id = ?", (pid,))
         conn.execute("DELETE FROM photos WHERE id = ?", (pid,))
+    caption.delete_captions(conn, ids)   # FTS5 is built-in; plain conn is fine
     return len(ids)
 
 
@@ -88,8 +90,12 @@ def prune_missing(conn):
     return len(gone)
 
 
-def start_index(path, db_path, yoloe_path, get_embedder, mode="new", device="cuda"):
-    """Enqueue an index job. Returns the job dict, or None if one is already running."""
+def start_index(path, db_path, yoloe_path, get_embedder, mode="new", device="cuda",
+                get_captioner=None):
+    """Enqueue an index job. Returns the job dict, or None if one is already running.
+
+    get_captioner: optional callable -> a captioner (or None). When it yields a
+    captioner, an extra 'caption' phase runs after embedding. Entirely optional."""
     global _job
     with _start_lock:
         if _job and _job["state"] == "running":
@@ -103,7 +109,8 @@ def start_index(path, db_path, yoloe_path, get_embedder, mode="new", device="cud
         }
     threading.Thread(
         target=_run,
-        args=(str(Path(path).resolve()), str(db_path), str(yoloe_path), get_embedder, mode, device),
+        args=(str(Path(path).resolve()), str(db_path), str(yoloe_path), get_embedder,
+              mode, device, get_captioner),
         daemon=True,
     ).start()
     return current_job()
@@ -119,7 +126,7 @@ def _check_cancel():
         raise _Cancelled()
 
 
-def _run(path, db_path, yoloe_path, get_embedder, mode, device):
+def _run(path, db_path, yoloe_path, get_embedder, mode, device, get_captioner=None):
     global _yoloe
     try:
         # ---------- PHASE 1: scan (YOLOE detection) ----------
@@ -191,6 +198,37 @@ def _run(path, db_path, yoloe_path, get_embedder, mode, device):
             cancel_cb=lambda: bool(_job and _job["cancel"]),
         )
         vconn.close()
+
+        # ---------- PHASE 3: caption (OPTIONAL) ----------
+        _check_cancel()
+        cap = get_captioner() if get_captioner else None
+        if cap is not None:
+            _set(phase="caption", message="載入描述模型…", done=0, total=0)
+            cconn = scan.init_db(Path(db_path))   # FTS5 is built-in; plain conn is fine
+            cconn.execute("PRAGMA busy_timeout=5000")
+            caption.ensure_caption_table(cconn)
+            rows = cconn.execute(
+                "SELECT id, path FROM photos "
+                "WHERE processed_at IS NOT NULL AND error IS NULL").fetchall()
+            id_to_path = {r[0]: r[1] for r in rows}
+            todo_ids = caption.uncaptioned_ids(cconn, [r[0] for r in rows])
+            model_name = getattr(cap, "model_name", cap.name)
+            _set(total=len(todo_ids), done=0, message="產生描述…")
+            for i, pid in enumerate(todo_ids):
+                _check_cancel()
+                p = Path(id_to_path[pid])
+                if not p.exists():
+                    continue
+                try:
+                    text = cap.caption(embed.load_image(p))
+                except Exception as e:           # noqa: BLE001 (one bad image shouldn't kill the job)
+                    text = ""
+                    _set(message=f"描述失敗(略過):{e}")
+                if text:
+                    caption.set_caption(cconn, pid, text, str(model_name))
+                    cconn.commit()
+                _set(done=i + 1, message=f"產生描述… ({i + 1}/{len(todo_ids)})")
+            cconn.close()
 
         _check_cancel()
         _set(state="done", phase="done", message="完成 ✓")
