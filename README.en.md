@@ -3,6 +3,14 @@
 **English** | [繁體中文](README.md)
 
 <p align="center">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT">
+  <img src="https://img.shields.io/badge/python-3.12-blue" alt="Python 3.12">
+  <img src="https://img.shields.io/badge/PyTorch-cu128-ee4c2c" alt="PyTorch cu128">
+  <img src="https://img.shields.io/badge/GPU-CUDA%2012.8-76b900" alt="CUDA 12.8">
+  <img src="https://img.shields.io/badge/100%25-local-8a2be2" alt="100% local">
+</p>
+
+<p align="center">
   <img src="repo-cover.png" alt="AI-PhotoViewer — local, private semantic photo search (YOLOE + SigLIP 2)" width="820">
 </p>
 
@@ -12,7 +20,7 @@ A local, privacy-first photo browser that combines **YOLOE open-vocabulary objec
   <img src="demo.png" alt="Web UI: results grid · photo viewer · detection inspector" width="900">
 </p>
 
-## Features
+## ✨ Features
 
 - 🔍 **Semantic search (zh/en)** — type natural language, get ranked photos (SigLIP 2 embeddings + sqlite-vec)
 - 🏷️ **Open-vocabulary detection** — YOLOE labels + segmentation masks per photo
@@ -23,7 +31,7 @@ A local, privacy-first photo browser that combines **YOLOE open-vocabulary objec
 - 🗂️ **Welcome page (all in the Web UI)** — add / reindex / cancel / remove folders, live progress, and backend status (GPU/VRAM/model/coverage) — no command line needed
 - 100% local · single SQLite file · runs on one GPU
 
-## Pipeline
+## 🔄 Pipeline
 
 ```
 your image folder
@@ -32,13 +40,13 @@ your image folder
    ──► web_demo   FastAPI: /api/search /api/photos ...     ──► browser UI
 ```
 
-## Requirements
+## 💻 Requirements
 
 - NVIDIA GPU (developed on RTX 5070 Ti, Blackwell)
 - Python 3.12 (Windows or Linux)
 - ~1.5–4.5 GB disk for a SigLIP model
 
-## Setup
+## 📦 Setup
 
 ```bash
 # 1) Create a virtual env (uv recommended; plain `python -m venv` works too)
@@ -64,7 +72,7 @@ Put a model directory somewhere (e.g. `../models/`) and point `embed.py` / the s
 > If HuggingFace downloads hang (Xet protocol), set `HF_HUB_DISABLE_XET=1`, or download the
 > files directly with `curl -L -C - --retry 40 <resolve-url>` into a local folder.
 
-## Usage
+## 🚀 Usage
 
 ### Quick start (scripts)
 
@@ -113,7 +121,7 @@ Once the server is up, you can index entirely from the welcome page — **no nee
 
 Indexing, reindexing, cancel, remove-source, and backend status all happen on the welcome page. `default-image/` is auto-registered as the default source when the server starts.
 
-## Web UI guide
+## 🖱️ Web UI guide
 
 - **Welcome page (default home)**: backend status card (GPU/VRAM, model, photo count, coverage) · ➕ add a folder (paste a path or 📁 browse) · each indexed source has **🔁 New / ⟳ All / 🗑 Remove** · job progress bar + cancel · **📂 Enter gallery**, and **🏠** in the gallery returns home
 - **Search box** (zh/en) + `top` (how many) + `threshold` (absolute similarity cutoff — the number
@@ -127,7 +135,7 @@ Indexing, reindexing, cancel, remove-source, and backend status all happen on th
 > SigLIP similarity scores are small in absolute terms (~0.04–0.11) and clustered — what matters is the
 > *ranking*, not the raw number.
 
-## Project structure
+## 🗂️ Project structure
 
 ```
 scan.py            YOLOE detection + masks  → photos.db
@@ -139,18 +147,11 @@ web_demo/
   jobs.py          background index jobs (scan→embed, progress/cancel, prune, sources)
   static/          index.html · app.js · style.css
 default-image/     default source folder (drop photos here; auto-registered at startup)
+scripts/           run-server.ps1 · run-server.sh · check-env.py
 requirements.txt
 ```
 
-## Notes
-
-- **Blackwell (RTX 50xx)** GPUs require PyTorch **cu128** wheels — the default PyPI build won't use the GPU.
-- The vector index lives **inside `photos.db`** (sqlite-vec) — one file, easy to back up.
-- `photos.db`, SigLIP weights (`models/`, `*.pt`), the venv and generated thumbnails are git-ignored.
-- **Server log**: rotating, at `web_demo/server.log` — 1 MB per file, 2 backups kept (3 MB cap).
-- The SigLIP 2 weights are subject to Google's model license; YOLOE/Ultralytics under AGPL-3.0.
-
-## Performance (RTX 5070 Ti · so400m)
+## ⚡ Performance (RTX 5070 Ti · so400m)
 
 | Metric | Value |
 |--------|-------|
@@ -161,3 +162,19 @@ requirements.txt
 | End-to-end indexing | ~15 img/s (GPU inference; a bit lower with disk / EXIF / DB) |
 
 > Measured on a single GPU. The `base` model (768-dim) is lighter and faster, but weaker on Chinese.
+
+## ⚠️ Notes
+
+- **Blackwell (RTX 50xx)** GPUs require PyTorch **cu128** wheels — the default PyPI build won't use the GPU.
+- The vector index lives **inside `photos.db`** (sqlite-vec) — one file, easy to back up.
+- `photos.db`, SigLIP weights (`models/`, `*.pt`), the venv and generated thumbnails are git-ignored.
+- **Server log**: rotating, at `web_demo/server.log` — 1 MB per file, 2 backups kept (3 MB cap).
+
+## 📄 License
+
+This project's **source code is MIT-licensed** — see [LICENSE](LICENSE).
+
+Third-party components keep their own licenses:
+
+- **YOLOE / Ultralytics** — AGPL-3.0 (mind the copyleft obligations if you redistribute a work that includes it)
+- **SigLIP 2** weights — under Google's model license

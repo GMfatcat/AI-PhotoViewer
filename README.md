@@ -3,6 +3,14 @@
 [English](README.en.md) | **繁體中文**
 
 <p align="center">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT">
+  <img src="https://img.shields.io/badge/python-3.12-blue" alt="Python 3.12">
+  <img src="https://img.shields.io/badge/PyTorch-cu128-ee4c2c" alt="PyTorch cu128">
+  <img src="https://img.shields.io/badge/GPU-CUDA%2012.8-76b900" alt="CUDA 12.8">
+  <img src="https://img.shields.io/badge/100%25-local-8a2be2" alt="100% local">
+</p>
+
+<p align="center">
   <img src="repo-cover.png" alt="AI-PhotoViewer — 本地、隱私優先的語意相片搜尋 (YOLOE + SigLIP 2)" width="820">
 </p>
 
@@ -12,7 +20,7 @@
   <img src="demo.png" alt="Web UI:結果網格 · 相片檢視 · 偵測面板" width="900">
 </p>
 
-## 功能特色
+## ✨ 功能特色
 
 - 🔍 **語意搜尋(中/英)** — 輸入自然語言,回傳排序後的照片(SigLIP 2 向量 + sqlite-vec)
 - 🏷️ **開放詞彙偵測** — 每張照片的 YOLOE 類別標籤 + 分割遮罩
@@ -23,7 +31,7 @@
 - 🗂️ **歡迎頁(全在 Web UI)** — 新增 / 重索引 / 取消 / 解除索引資料夾、即時進度、後端狀態(GPU/VRAM/模型/覆蓋率),不必碰指令列
 - 100% 本地 · 單一 SQLite 檔 · 單張 GPU 即可
 
-## 流程架構
+## 🔄 流程架構
 
 ```
 你的照片資料夾
@@ -32,13 +40,13 @@
    ──► web_demo   FastAPI:/api/search /api/photos …    ──► 瀏覽器 UI
 ```
 
-## 系統需求
+## 💻 系統需求
 
 - NVIDIA GPU(開發於 RTX 5070 Ti,Blackwell)
 - Python 3.12(Windows 或 Linux)
 - SigLIP 模型約需 1.5–4.5 GB 硬碟空間
 
-## 安裝
+## 📦 安裝
 
 ```bash
 # 1) 建立虛擬環境(建議 uv;一般 `python -m venv` 也可)
@@ -64,7 +72,7 @@ uv pip install -r requirements.txt
 > 若 HuggingFace 下載卡住(Xet 協定),設 `HF_HUB_DISABLE_XET=1`,或直接用
 > `curl -L -C - --retry 40 <resolve-url>` 把檔案抓到本地資料夾。
 
-## 使用方式
+## 🚀 使用方式
 
 ### 快速啟動(腳本)
 
@@ -113,7 +121,7 @@ python web_demo\main.py --db photos.db --model ..\models\siglip2-so400m
 
 索引 / 重索引 / 取消 / 解除索引 / 後端狀態,全部在歡迎頁完成。`default-image/` 會在 server 啟動時自動註冊成預設來源。
 
-## Web UI 操作說明
+## 🖱️ Web UI 操作說明
 
 - **歡迎頁(預設首頁)**:後端狀態卡(GPU/VRAM、模型、照片數、覆蓋率)· ➕ 新增資料夾(貼路徑或 📁 瀏覽)· 已索引清單每列可 **🔁 新增 / ⟳ 全部 / 🗑 移除** · 工作進度條 + 取消 · 「**📂 開始檢視**」進相簿,相簿內「**🏠**」回首頁
 - **搜尋框**(中/英)+ `top`(回幾張)+ `門檻`(絕對相似度下限 —— 數字對應縮圖上的綠色徽章;最左 = 全部顯示)
@@ -125,7 +133,7 @@ python web_demo\main.py --db photos.db --model ..\models\siglip2-so400m
 
 > SigLIP 的相似度絕對值很小(~0.04–0.11)且密集 —— 重點是**排序**,不是數字本身。
 
-## 專案結構
+## 🗂️ 專案結構
 
 ```
 scan.py            YOLOE 偵測 + 遮罩  → photos.db
@@ -137,18 +145,11 @@ web_demo/
   jobs.py          背景索引工作(scan→embed、進度/取消、prune、sources 管理)
   static/          index.html · app.js · style.css
 default-image/     預設來源資料夾(把照片放這裡;啟動時自動註冊)
+scripts/           run-server.ps1 · run-server.sh · check-env.py
 requirements.txt
 ```
 
-## 注意事項
-
-- **Blackwell(RTX 50xx)** GPU 需要 PyTorch **cu128** 版 —— 預設的 PyPI 版不會吃 GPU。
-- 向量索引就存在 **`photos.db` 裡面**(sqlite-vec)—— 單一檔案、好備份。
-- `photos.db`、SigLIP 權重(`models/`、`*.pt`)、venv 與產生的縮圖都已被 git 忽略。
-- **Server log**:rotating,位於 `web_demo/server.log`,單檔 1 MB、保留 2 份(共 3 MB 上限)。
-- SigLIP 2 權重受 Google 模型授權;YOLOE / Ultralytics 為 AGPL-3.0。
-
-## 效能參考(RTX 5070 Ti · so400m)
+## ⚡ 效能參考(RTX 5070 Ti · so400m)
 
 | 項目 | 數據 |
 |------|------|
@@ -159,3 +160,19 @@ requirements.txt
 | 端到端索引 | ~15 張/秒(GPU 推論;含磁碟 / EXIF / DB 略低) |
 
 > 數據為單卡實測;`base` 模型(768 維)更省 VRAM、更快,但中文較弱。
+
+## ⚠️ 注意事項
+
+- **Blackwell(RTX 50xx)** GPU 需要 PyTorch **cu128** 版 —— 預設的 PyPI 版不會吃 GPU。
+- 向量索引就存在 **`photos.db` 裡面**(sqlite-vec)—— 單一檔案、好備份。
+- `photos.db`、SigLIP 權重(`models/`、`*.pt`)、venv 與產生的縮圖都已被 git 忽略。
+- **Server log**:rotating,位於 `web_demo/server.log`,單檔 1 MB、保留 2 份(共 3 MB 上限)。
+
+## 📄 授權
+
+本專案**原始碼以 MIT 授權** —— 見 [LICENSE](LICENSE)。
+
+使用到的第三方元件仍受各自授權約束:
+
+- **YOLOE / Ultralytics** — AGPL-3.0(若散布含此元件的作品,需留意 AGPL 的 copyleft 義務)
+- **SigLIP 2** 權重 — 受 Google 模型授權
